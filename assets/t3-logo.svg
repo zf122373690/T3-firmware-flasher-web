@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title">
+  <title>T3 副卡宝</title>
+  <rect width="96" height="96" rx="20" fill="#101827"/>
+  <path d="M18 24h60v13H56v35H40V37H18z" fill="#35d07f"/>
+  <path d="M62 50h10v22H62zM78 50h-8v-9h8z" fill="#fff"/>
+  <circle cx="25" cy="76" r="5" fill="#35d07f"/>
+</svg>

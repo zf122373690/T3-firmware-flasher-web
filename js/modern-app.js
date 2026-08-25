@@ -1,4 +1,4 @@
-// Modern ESP Launchpad Application - 完整功能版本
+// T3 副卡宝固件烧录应用
 // 导入 ESP 工具库
 import { ESPLoader, Transport } from './bundle.js';
 
@@ -17,21 +17,12 @@ class ModernESPLaunchpad {
         // 应用配置列表 - 可从外部配置文件加载
         this.availableApplications = [
             {
-                name: "小智amourk08v1.6.2-增量包",
-                url: "https://music.chenweikang.top/release_1.6.2/xiaozhi_xiaozhi_0x100000_1.6.2.bin",
-                flashAddress: "0x100000",
-                value: "xiaozhi-increment",
-                description: "适用于已安装基础版本用户的增量更新包",
-                version: "1.6.2",
-                type: "increment"
-            },
-            {
-                name: "小智amourk08v1.6.2-全量包", 
-                url: "https://music.chenweikang.top/release_1.6.2/xiaozhi_xiaozhi_0x100000_1.6.2.bin",
+                name: "T3 副卡宝出厂固件",
+                url: "./firmware.factory.bin",
                 flashAddress: "0x0",
-                value: "xiaozhi-full",
-                description: "完整版本3合一固件，包含所有功能，适用于全新安装",
-                version: "1.6.2",
+                value: "built-in-firmware",
+                description: "T3 副卡宝整包出厂固件，从 Flash 0x0 开始烧录",
+                version: "factory",
                 type: "full"
             }
         ];
@@ -272,8 +263,8 @@ class ModernESPLaunchpad {
     }
 
     initializeConsole() {
-        this.addConsoleMessage('ESP Launchpad 控制台已就绪', 'info');
-        this.addConsoleMessage('请连接您的 ESP 设备到 USB 串口', 'info');
+        this.addConsoleMessage('T3 副卡宝控制台已就绪', 'info');
+        this.addConsoleMessage('请连接您的 T3 设备到 USB 串口', 'info');
         
         // 调试控制台元素状态
         if (this.consoleOutput) {
@@ -1084,7 +1075,7 @@ class ModernESPLaunchpad {
             this.resetDeviceBtn.disabled = true;
             
             // 更新状态提示
-            this.alertMessage.textContent = '请连接您的 ESP 设备到 USB 串口，然后点击"连接设备"按钮开始使用。';
+            this.alertMessage.textContent = '请连接您的 T3 设备到 USB 串口，然后点击"连接设备"按钮开始使用。';
             this.statusAlert.className = 'alert alert-info alert-dismissible fade show modern-alert';
             this.statusAlert.querySelector('i').className = 'fas fa-info-circle me-2';
         }
@@ -1313,9 +1304,9 @@ class ModernESPLaunchpad {
         }
 
         this.addConsoleMessage(`开始烧录应用: ${appName}`, 'info');
-        this.addConsoleMessage(`从远程下载固件: ${appUrl}`, 'info');
+        this.addConsoleMessage(`读取内置固件: ${appUrl}`, 'info');
         
-        // 下载远程固件文件
+        // 读取内置固件文件
         this.updateProgress('正在下载固件...', 10);
         const firmwareData = await this.downloadRemoteFirmware(appUrl);
         
@@ -1351,7 +1342,7 @@ class ModernESPLaunchpad {
 
     async downloadRemoteFirmware(url) {
         try {
-            this.addConsoleMessage('开始下载远程固件...', 'info');
+        this.addConsoleMessage('开始读取内置固件...', 'info');
             
             const response = await fetch(url);
             if (!response.ok) {

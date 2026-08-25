@@ -1,16 +1,16 @@
-# ESP Launchpad 🚀
+# T3 副卡宝固件烧录工具
 
 <div align="center">
 
-![ESP Launchpad Logo](assets/esp-logo.png)
+![T3 副卡宝 Logo](assets/t3-logo.svg)
 
-**现代化的ESP设备在线烧录工具**
+**T3 副卡宝在线固件烧录工具**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![WebSerial](https://img.shields.io/badge/WebSerial-Enabled-orange.svg)](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API)
 [![WebUSB](https://img.shields.io/badge/WebUSB-Compatible-purple.svg)](https://developer.mozilla.org/en-US/docs/Web/API/WebUSB_API)
 
-[🌐 在线体验](https://Good0007.github.io/esp-launchpad/) | [📖 使用指南](#使用指南) | [🔧 本地部署](#本地部署) | [🤝 贡献代码](#贡献)
+[📖 使用指南](#使用指南) | [🔧 Cloudflare Pages 部署](#cloudflare-pages-部署)
 
 </div>
 
@@ -38,7 +38,7 @@
 
 ### 在线使用（推荐）
 
-1. 访问 [ESP Launchpad 在线版本](https://Good0007.github.io/esp-launchpad/)
+1. 访问部署后的 T3 副卡宝页面
 2. 使用USB数据线连接ESP设备到电脑
 3. 点击"连接设备"按钮选择串口
 4. 选择固件文件或使用快速开始模式
@@ -48,8 +48,8 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/Good0007/esp-launchpad.git
-cd esp-launchpad
+git clone <你的仓库地址>
+cd T3-firmware-flasher
 
 # 启动HTTP服务器（避免CORS问题）
 python3 -m http.server 8080
@@ -138,22 +138,33 @@ open http://localhost:8080
 ## 🏗️ 项目结构
 
 ```
-esp-launchpad/
+T3-firmware-flasher/
 ├── index.html              # 主界面文件
 ├── LICENSE                 # 开源许可证
 ├── README.md              # 项目说明文档
-├── assets/                # 静态资源
+├── assets/                # 静态资源与内置固件
 │   ├── favicon.ico        # 网站图标
-│   ├── esp-logo.png       # ESP Logo
+│   ├── t3-logo.svg        # T3 副卡宝 Logo
+│   ├── firmware.bin       # 内置固件，烧录地址 0x0
 │   └── fonts/            # 字体文件
 ├── css/                  # 样式文件
 │   ├── modern-styles.css # 现代化样式
 │   └── xterm.css         # 终端样式
 └── js/                   # JavaScript文件
     ├── bundle.js         # ESP工具库
-    ├── modern-app-simple.js # 主应用逻辑
+    ├── modern-app.js        # 主应用逻辑
     └── qrcode.min.js     # QR码生成库
 ```
+
+## Cloudflare Pages 部署
+
+这是纯静态项目，不需要构建命令。创建 Cloudflare Pages 项目并连接仓库后，设置：
+
+- 构建命令：留空
+- 构建输出目录：`/`
+- 根目录：`/`
+
+Cloudflare Pages 默认提供 HTTPS，Chrome 或 Edge 可以直接使用 Web Serial 连接设备。
 
 ---
 
