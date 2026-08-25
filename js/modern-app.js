@@ -13,6 +13,7 @@ class ModernESPLaunchpad {
         this.progressCallback = null;
         this.chip = "default";
         this.chipDesc = "default";
+        this.displayChipName = "T3 副卡宝";
         
         // 应用配置列表 - 可从外部配置文件加载
         this.availableApplications = [
@@ -929,11 +930,11 @@ class ModernESPLaunchpad {
             // 获取芯片信息 - 添加错误处理
             try {
                 this.chip = await this.esploader.chip.getChipDescription();
-                this.addConsoleMessage(`检测到芯片: ${this.chip}`, 'success');
+                this.addConsoleMessage(`检测到设备: ${this.displayChipName}`, 'success');
             } catch (e) {
                 console.warn('无法获取芯片描述:', e);
                 this.chip = this.esploader.chip.CHIP_NAME || 'ESP32'; // 使用备用名称
-                this.addConsoleMessage(`使用默认芯片名称: ${this.chip}`, 'warning');
+                this.addConsoleMessage(`使用默认设备名称: ${this.displayChipName}`, 'warning');
             }
             
             try {
@@ -942,12 +943,12 @@ class ModernESPLaunchpad {
             } catch (e) {
                 console.warn('无法获取芯片特性:', e);
                 this.chipDesc = '未知特性';
-                this.addConsoleMessage('无法获取芯片特性', 'warning');
+            this.addConsoleMessage('无法获取 T3 副卡宝设备特性', 'warning');
             }
             
             this.isConnected = true;
             this.updateConnectionStatus();
-            this.addConsoleMessage(`设备连接成功: ${this.chip}`, 'success');
+            this.addConsoleMessage(`设备连接成功: ${this.displayChipName}`, 'success');
             
             // 获取 MAC 地址
             try {
@@ -1051,13 +1052,13 @@ class ModernESPLaunchpad {
             
             // 显示设备信息
             this.deviceInfoMini.classList.remove('d-none');
-            this.chipInfoMini.textContent = this.chip || 'ESP32';
+            this.chipInfoMini.textContent = this.displayChipName;
             
             // 启用重置按钮
             this.resetDeviceBtn.disabled = false;
             
             // 更新状态提示
-            this.alertMessage.textContent = `设备已连接 - ${this.chip}，您可以选择固件进行烧录。`;
+            this.alertMessage.textContent = `设备已连接 - ${this.displayChipName}，您可以选择固件进行烧录。`;
             this.statusAlert.className = 'alert alert-success alert-dismissible fade show modern-alert';
             this.statusAlert.querySelector('i').className = 'fas fa-check-circle me-2';
             
