@@ -19,7 +19,7 @@ class ModernESPLaunchpad {
         this.availableApplications = [
             {
                 name: "T3副卡宝4.0版本",
-                url: "./firmware.factory.bin",
+                url: "https://cloud.1992418.xyz/d/ecloud/T3/4.0.factory.bin?sign=Y3keJbal8j4Ve_FYySRqe-R3nnvM4mea8TCwki1wCRw=:0",
                 flashAddress: "0x0",
                 value: "built-in-firmware",
                 description: "T3 副卡宝整包出厂固件，从 Flash 0x0 开始烧录",
