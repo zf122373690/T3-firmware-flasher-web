@@ -141,6 +141,102 @@ body.modern-body {
     to { transform: rotate(360deg); }
 }
 
+/* T3 control surface refresh */
+:root {
+    --primary-color: #16a36a;
+    --primary-dark: #0f8052;
+    --secondary-color: #64748b;
+    --background-color: #eef2f1;
+    --card-background: #ffffff;
+    --border-color: #dce5e1;
+    --text-color: #17231f;
+    --text-muted: #718079;
+    --border-radius: 10px;
+    --border-radius-sm: 7px;
+    --shadow-sm: 0 1px 2px rgba(16, 37, 28, .05);
+    --shadow: 0 10px 26px rgba(16, 37, 28, .08);
+}
+
+body.modern-body {
+    background: #eef2f1;
+    color: var(--text-color);
+}
+
+.modern-header {
+    background: #14221d;
+    border-bottom: 0;
+    box-shadow: 0 4px 18px rgba(10, 28, 20, .16);
+    padding: 1rem 0;
+}
+
+.header-logo {
+    width: 46px;
+    height: 46px;
+    border-radius: 11px;
+}
+
+.header-title { color: #f5faf7; font-size: 1.35rem; letter-spacing: 0; }
+.header-subtitle { color: #a7bbb1; }
+.device-status-panel { background: #1e3229; border: 1px solid #355344; border-radius: 9px; padding: .45rem .6rem; }
+.status-indicator { color: #d9e7df; }
+.device-info-mini small { background: #294238; color: #c9ddd3 !important; }
+.status-dot { color: #f08b65; }
+.status-dot.connected { color: #46d994; }
+.connection-status .btn-outline-primary { color: #b9f2d5; border-color: #4fae7f; }
+.connection-status .btn-outline-primary:hover { color: #14221d; background: #7be0ac; border-color: #7be0ac; }
+
+.main-content { padding: 1.5rem 0 2.5rem; }
+.main-content > .container-fluid { max-width: 1440px; }
+.modern-alert { background: #fff; border: 1px solid #d6e4dd; border-left: 4px solid #16a36a; border-radius: 8px; box-shadow: var(--shadow-sm); color: #3f554b; }
+.modern-card { border: 1px solid var(--border-color); border-radius: 10px; box-shadow: var(--shadow-sm); margin-bottom: 1rem; }
+.modern-card:hover { transform: none; box-shadow: var(--shadow); }
+.modern-card .card-header { background: #f8faf9; border-bottom: 1px solid var(--border-color); padding: .85rem 1.1rem !important; }
+.modern-card .card-title { color: #21352c; font-size: .92rem; text-transform: uppercase; letter-spacing: .04em; }
+.modern-card .card-title i { color: var(--primary-color); }
+.modern-card .card-body { padding: 1.1rem !important; }
+.form-label { color: #40564b; font-weight: 600; }
+.form-control, .form-select, .input-group-text { border-color: #d3e0da; color: #1e3028; }
+.form-control:focus, .form-select:focus { border-color: #49bd82; box-shadow: 0 0 0 .2rem rgba(22, 163, 106, .12); }
+#defaultFirmwareDisplay { border-color: #cde8da; color: #176b48; font-weight: 600; }
+.btn-primary, .flash-button { background: #16a36a; border-color: #16a36a; }
+.btn-primary:hover, .flash-button:hover { background: #0f8052; border-color: #0f8052; }
+.flash-button { min-height: 52px; border-radius: 8px; font-weight: 700; box-shadow: 0 6px 14px rgba(22, 163, 106, .2); }
+.btn-outline-primary { color: #128457; border-color: #6ac79a; }
+.btn-outline-primary:hover { color: #fff; background: #16a36a; border-color: #16a36a; }
+.btn-check:checked + .btn-outline-primary { color: #fff; background: #16a36a; border-color: #16a36a; }
+.progress { background: #e2ebe6 !important; border-radius: 99px; }
+.progress-bar { background: #16a36a; }
+.console-card { overflow: hidden; }
+.console-card .card-header { background: #1b2b24; border-bottom-color: #2f463a; }
+.console-card .card-title { color: #dcebe3; }
+.console-card .card-title i { color: #71dda5; }
+.console-card .btn-outline-secondary, .console-card .btn-outline-primary { color: #c4d7cc; border-color: #587162; }
+.console-card .btn-outline-secondary:hover, .console-card .btn-outline-primary:hover { color: #17231f; background: #b7e8ca; border-color: #b7e8ca; }
+.console-container { background: #101a16; }
+.console-output { color: #b7d7c4; }
+.console-timestamp { color: #6f9a82; }
+.console-text { color: #c8e8d5; }
+.alert-info { color: #3e6655; background: #eff9f3; border-color: #d2ecdc; }
+
+@media (max-width: 700px) {
+    .modern-header { padding: .75rem 0; }
+    .modern-header .container-fluid { padding-left: 1rem !important; padding-right: 1rem !important; }
+    .header-logo { width: 38px; height: 38px; margin-right: .65rem !important; }
+    .header-title { font-size: 1.08rem; }
+    .header-subtitle { font-size: .68rem; }
+    .device-status-panel { padding: .3rem; }
+    .device-status-panel .status-indicator { margin-right: .35rem !important; }
+    .device-info-mini { display: none !important; }
+    .connection-status .btn { font-size: .72rem; }
+    .main-content { padding: 1rem 0 1.5rem; }
+    .main-content > .container-fluid { padding-left: .75rem !important; padding-right: .75rem !important; }
+    .modern-alert { font-size: .8rem; padding: .65rem .75rem; }
+    .modern-card .card-header { padding: .7rem .8rem !important; }
+    .modern-card .card-body { padding: .8rem !important; }
+    #firmwareModeToggle .btn { padding: .3rem .45rem; font-size: .72rem; }
+    .flash-button { min-height: 48px; }
+}
+
 /* Main Content */
 .main-content {
     padding: 1rem 0;
