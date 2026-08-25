@@ -325,7 +325,7 @@ class ModernESPLaunchpad {
         // 动态生成应用选项
         if (this.applicationSelect) {
             // 清空现有选项（除了默认的占位符选项）
-            this.applicationSelect.innerHTML = '<option value="">请选择应用...</option>';
+            this.applicationSelect.innerHTML = '';
             
             // 添加所有应用选项
             this.availableApplications.forEach(app => {
@@ -341,6 +341,10 @@ class ModernESPLaunchpad {
                 }
                 this.applicationSelect.appendChild(option);
             });
+
+            if (this.availableApplications.length === 1) {
+                this.applicationSelect.selectedIndex = 0;
+            }
             
             this.addConsoleMessage(`已加载 ${this.availableApplications.length} 个可用应用`, 'info');
         } else {
