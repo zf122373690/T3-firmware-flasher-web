@@ -97,6 +97,7 @@ class ModernESPLaunchpad {
         this.firmwareFileInput = document.getElementById('firmwareFileInput');
         this.firmwareFilesList = document.getElementById('firmwareFilesList');
         this.fileUploadArea = document.getElementById('fileUploadArea');
+        this.firmwareUrlInput = document.getElementById('firmwareUrlInput');
 
         // Settings elements
         this.flashBaudrateSelect = document.getElementById('flashBaudrateSelect');
@@ -177,6 +178,9 @@ class ModernESPLaunchpad {
             this.fileUploadArea.addEventListener('dragleave', (e) => this.handleDragLeave(e));
             this.fileUploadArea.addEventListener('drop', (e) => this.handleFileDrop(e));
             this.fileUploadArea.addEventListener('click', (e) => this.handleUploadAreaClick(e));
+        }
+        if (this.firmwareUrlInput) {
+            this.firmwareUrlInput.addEventListener('input', () => this.updateFlashButtonState());
         }
 
         // Application selection
@@ -765,8 +769,9 @@ class ModernESPLaunchpad {
             }
         } else {
             // DIY mode
-            const hasFiles = this.selectedFiles.length > 0;
-            const allValid = this.selectedFiles.every(file => this.validateAddress(file.address));
+            const hasFiles = Boolean(this.firmwareUrlInput?.value.trim());
+            const address = document.getElementById('flashAddressInput')?.value || '0';
+            const allValid = this.validateAddress(address);
             const isConnected = this.isConnected;
             
             // 添加调试信息
@@ -774,8 +779,8 @@ class ModernESPLaunchpad {
                 hasFiles,
                 allValid,
                 isConnected,
-                filesCount: this.selectedFiles.length,
-                addresses: this.selectedFiles.map(f => f.address)
+                firmwareUrl: this.firmwareUrlInput?.value.trim(),
+                address
             });
             
             this.flashButton.disabled = !hasFiles || !allValid || !isConnected;
@@ -784,7 +789,7 @@ class ModernESPLaunchpad {
                 this.flashButtonText.textContent = '请先连接设备';
                 this.flashButton.className = 'btn btn-secondary btn-lg flash-button';
             } else if (!hasFiles) {
-                this.flashButtonText.textContent = '请添加固件文件';
+                this.flashButtonText.textContent = '请输入固件地址';
                 this.flashButton.className = 'btn btn-warning btn-lg flash-button';
             } else if (!allValid) {
                 this.flashButtonText.textContent = '修复地址错误后烧录';
@@ -1220,76 +1225,27 @@ class ModernESPLaunchpad {
     }
 
     async flashCustomMode() {
-        if (this.selectedFiles.length === 0) {
-            throw new Error('没有选择要烧录的文件');
-        }
+        const firmwareUrl = this.firmwareUrlInput?.value.trim();
+        const addressText = document.getElementById('flashAddressInput')?.value || '0';
+        if (!firmwareUrl) throw new Error('请输入 OpenList 固件地址');
+        if (!this.validateAddress(addressText)) throw new Error('Flash 地址格式不正确');
 
-        // 验证所有文件地址
-        for (const fileInfo of this.selectedFiles) {
-            if (!this.validateAddress(fileInfo.address)) {
-                throw new Error(`文件 ${fileInfo.name} 的地址格式不正确`);
+        const address = parseInt(addressText.replace(/^0x/i, ''), 16);
+        this.addConsoleMessage(`读取自定义固件: ${firmwareUrl}`, 'info');
+        this.updateProgress('正在读取 OpenList 固件...', 10);
+        const fileData = await this.downloadRemoteFirmware(firmwareUrl);
+        this.addConsoleMessage(`开始写入固件 (${this.formatFileSize(fileData.length)}) 到 0x${address.toString(16)}...`, 'info');
+        await this.esploader.writeFlash({
+            fileArray: [{ data: fileData, address }],
+            flashSize: 'keep',
+            eraseAll: false,
+            compress: this.compressCheckbox ? this.compressCheckbox.checked : true,
+            reportProgress: (fileIndex, written, total) => {
+                const percent = Math.round((written / total) * 100);
+                this.updateProgress(`烧录中... (${percent}%)`, 10 + (written / total) * 85);
             }
-        }
-
-        // 按地址排序文件
-        const sortedFiles = [...this.selectedFiles].sort((a, b) => {
-            const addrA = parseInt(a.address.replace(/^0x/i, ''), 16);
-            const addrB = parseInt(b.address.replace(/^0x/i, ''), 16);
-            return addrA - addrB;
         });
-
-        const totalSize = sortedFiles.reduce((sum, file) => sum + (file.file?.size || 0), 0);
-        let processedSize = 0;
-
-        // 逐个烧录文件
-        for (let i = 0; i < sortedFiles.length; i++) {
-            const fileInfo = sortedFiles[i];
-            if (!fileInfo.file) continue; // 跳过占位符文件
-
-            const address = parseInt(fileInfo.address.replace(/^0x/i, ''), 16);
-            const progressBase = (processedSize / totalSize) * 90; // 预留10%给最后的验证
-            
-            this.addConsoleMessage(`烧录 ${fileInfo.name} 到地址 0x${address.toString(16)}...`, 'info');
-            this.updateProgress(`烧录 ${fileInfo.name}...`, progressBase);
-
-            const fileData = await this.readFileAsBinaryString(fileInfo.file);
-            
-            // 调试：检查数据格式
-            console.log('文件数据类型:', typeof fileData, '长度:', fileData.length);
-            console.log('数据前10字符:', fileData.substring(0, 10).split('').map(c => c.charCodeAt(0).toString(16)).join(' '));
-            
-            this.addConsoleMessage(`开始写入 ${fileInfo.name} (${this.formatFileSize(fileInfo.file.size)})...`, 'info');
-            
-            let lastProgressReport = 0; // 用于控制进度报告频率
-            
-            await this.esploader.writeFlash({
-                fileArray: [{
-                    data: fileData,
-                    address: address
-                }],
-                flashSize: 'keep',
-                eraseAll: false,
-                compress: this.compressCheckbox ? this.compressCheckbox.checked : true, // 默认启用压缩
-                reportProgress: (fileIndex, written, total) => {
-                    const fileProgress = (written / total) * (fileInfo.file.size / totalSize) * 90;
-                    const currentProgress = progressBase + fileProgress;
-                    const progressPercent = Math.round((written/total)*100);
-                    
-                    // 添加调试信息（减少频率）
-                    if (progressPercent % 10 === 0 && progressPercent !== lastProgressReport) {
-                        console.log(`烧录进度: ${written}/${total} bytes, 当前进度: ${currentProgress.toFixed(1)}%`);
-                        this.addConsoleMessage(`写入进度: ${this.formatFileSize(written)}/${this.formatFileSize(total)} (${progressPercent}%)`, 'info');
-                        lastProgressReport = progressPercent;
-                    }
-                    
-                    this.updateProgress(`烧录 ${fileInfo.name}... (${progressPercent}%)`, currentProgress);
-                }
-            });
-
-            processedSize += fileInfo.file.size;
-            this.addConsoleMessage(`✓ ${fileInfo.name} 烧录完成`, 'success');
-        }
-
+        this.addConsoleMessage('✓ 自定义固件烧录完成', 'success');
         this.addConsoleMessage('所有文件烧录完成', 'success');
         // 移除验证延迟，直接返回让上层处理重置
     }
