@@ -18,7 +18,7 @@ class ModernESPLaunchpad {
         // 应用配置列表 - 可从外部配置文件加载
         this.availableApplications = [
             {
-                name: "T3 副卡宝出厂固件",
+                name: "T3副卡宝4.0版本",
                 url: "./firmware.factory.bin",
                 flashAddress: "0x0",
                 value: "built-in-firmware",

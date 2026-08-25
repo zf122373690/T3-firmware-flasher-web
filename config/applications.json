@@ -4,7 +4,7 @@
   "description": "我的 ESP 固件烧录配置",
   "applications": [
     {
-      "name": "T3 副卡宝出厂固件",
+      "name": "T3副卡宝4.0版本",
       "url": "./firmware.factory.bin",
       "flashAddress": "0x0",
       "value": "built-in-firmware",
