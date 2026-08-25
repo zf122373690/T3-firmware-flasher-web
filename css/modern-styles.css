@@ -188,6 +188,8 @@ body.modern-body {
 .main-content { padding: 1.5rem 0 2.5rem; }
 .main-content > .container-fluid { max-width: 1440px; }
 .modern-alert { background: #fff; border: 1px solid #d6e4dd; border-left: 4px solid #16a36a; border-radius: 8px; box-shadow: var(--shadow-sm); color: #3f554b; }
+.flash-warning { background: #fffaf0; border-color: #f1dfb7; border-left-color: #d99018; color: #735318; }
+.flash-warning i { color: #d99018; }
 .modern-card { border: 1px solid var(--border-color); border-radius: 10px; box-shadow: var(--shadow-sm); margin-bottom: 1rem; }
 .modern-card:hover { transform: none; box-shadow: var(--shadow); }
 .modern-card .card-header { background: #f8faf9; border-bottom: 1px solid var(--border-color); padding: .85rem 1.1rem !important; }
