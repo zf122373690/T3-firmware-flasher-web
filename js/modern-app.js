@@ -1172,23 +1172,13 @@ class ModernESPLaunchpad {
             this.addConsoleMessage('固件烧录完成！正在重置设备...', 'success');
             this.updateProgress('重置设备中...', 95);
             
-            // 烧录完成后自动重置设备，让其退出下载模式
+            // 烧录完成后明确复位设备，让其退出下载模式并启动新固件
             try {
                 if (this.esploader && this.esploader.chip) {
-                    if (typeof this.esploader.chip.softReset === 'function') {
-                        try {
-                            await this.esploader.chip.softReset();
-                            await new Promise(resolve => setTimeout(resolve, 100));
-                            this.addConsoleMessage('软重置完成', 'info');
-                        } catch (softResetError) {
-                            console.warn('软重置失败:', softResetError);
-                            this.addConsoleMessage('软重置失败，将尝试硬重置', 'warning');
-                        }
-                    }
                     if (typeof this.esploader.hardReset === 'function') {
                         await this.esploader.hardReset();
-                        this.addConsoleMessage('设备已重置，正在启动新固件...', 'success');
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        this.addConsoleMessage('已发送重启命令，设备正在启动新固件...', 'success');
+                        await new Promise(resolve => setTimeout(resolve, 1500));
                     } else {
                         throw new Error('hardReset 方法不可用');
                     }
@@ -1197,7 +1187,7 @@ class ModernESPLaunchpad {
                 }
             } catch (resetError) {
                 console.warn('自动重置失败:', resetError);
-                this.addConsoleMessage('烧录完成，请断开USB连接', 'warning');
+                this.addConsoleMessage('自动重启失败，请手动按一下设备复位键', 'warning');
             }
             this.updateProgress('烧录完成', 100);
             
