@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-    <meta name="description" content="T3 副卡宝固件烧录工具" />
-    <title>T3 副卡宝 · 固件烧录(跨版本烧录，会清空配置数据)</title>
+    <meta name="description" content="T3 副卡宝固件升级工具" />
+    <title>T3 副卡宝 · 固件升级(跨版本升级，会清空配置数据)</title>
     
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="assets/favicon.ico" />
@@ -26,7 +26,7 @@
                     <img src="assets/t3-logo.svg" alt="T3 副卡宝 Logo" class="header-logo me-3">
                     <div>
                         <h1 class="header-title mb-0">T3 副卡宝</h1>
-                        <p class="header-subtitle mb-0">固件烧录工具 · 从 0x0 开始</p>
+                        <p class="header-subtitle mb-0">固件升级工具 · 从 0x0 开始</p>
                     </div>
                 </div>
                 
@@ -65,7 +65,7 @@
 
             <div class="alert alert-warning modern-alert flash-warning" role="alert">
                 <i class="fas fa-triangle-exclamation me-2"></i>
-                <span><strong>烧录提示：</strong>本烧录方式会清除设备中的所有配置数据，也可用于救砖设备。请确认固件来源和设备连接无误后再开始烧录。</span>
+                <span><strong>升级提示：</strong>本升级方式会清除设备中的所有配置数据，也可用于救砖设备。请确认固件来源和设备连接无误后再开始升级。</span>
             </div>
 
             <div class="alert alert-info modern-alert version-warning" role="alert">
@@ -99,7 +99,7 @@
                                 <div class="mb-2">
                                     <label class="form-label form-label-sm">默认固件</label>
                                     <div class="form-control form-control-sm bg-light" id="defaultFirmwareDisplay">
-                                        T3副卡宝4.0版本 · 烧录地址 0x0
+                                        T3副卡宝4.0版本 · 升级地址 0x0
                                     </div>
                                     <select class="form-select form-select-sm d-none" id="applicationSelect">
                                         <option value="">正在加载应用列表...</option>
@@ -183,42 +183,16 @@
                         </div>
                     </div>
 
-                    <!-- Flash Settings Card -->
-                    <div class="modern-card compact">
-                        <div class="card-header py-2">
-                            <h6 class="card-title mb-0">
-                                <i class="fas fa-cog me-2"></i>
-                                烧录设置
-                            </h6>
-                        </div>
-                        <div class="card-body py-3">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <label class="form-label form-label-sm">烧录波特率</label>
-                                    <select class="form-select form-select-sm" id="flashBaudrateSelect">
-                                        <option value="921600">921600</option>
-                                        <option value="460800">460800</option>
-                                        <option value="230400">230400</option>
-                                        <option value="115200" selected>115200</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label form-label-sm">控制台波特率</label>
-                                    <select class="form-select form-select-sm" id="consoleBaudrateSelect">
-                                        <option value="115200" selected>115200</option>
-                                        <option value="74880">74880</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Flash Button -->
                     <div class="d-grid mb-3">
                         <button class="btn btn-primary flash-button" id="flashButton" disabled>
                             <i class="fas fa-download me-2"></i>
-                            <span id="flashButtonText">开始烧录</span>
+                            <span id="flashButtonText">开始升级</span>
                         </button>
+                        <div class="upgrade-action-hint" id="upgradeActionHint" hidden>
+                            <i class="fas fa-circle-check"></i>
+                            <span>设备已连接，点击上方按钮即可完成 4.0 全量升级</span>
+                        </div>
                     </div>
                 </div>
 
@@ -229,7 +203,7 @@
                         <div class="card-header py-2">
                             <h6 class="card-title mb-0">
                                 <i class="fas fa-tasks me-2"></i>
-                                烧录进度
+                                升级进度
                             </h6>
                         </div>
                         <div class="card-body py-3">
@@ -308,13 +282,13 @@
                 <div class="modal-header">
                     <h5 class="modal-title">
                         <i class="fas fa-check-circle text-success me-2"></i>
-                        烧录完成
+                        升级完成
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
                     <div class="success-content">
-                        <p class="lead">固件烧录已成功完成！</p>
+                        <p class="lead">固件升级已成功完成！</p>
                         <p>设备已自动重置并退出下载模式。应用程序现在应该正在运行。</p>
                         <div class="alert alert-info">
                             <i class="fas fa-info-circle me-2"></i>
