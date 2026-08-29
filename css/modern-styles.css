@@ -205,6 +205,8 @@ body.modern-body {
 .btn-primary, .flash-button { background: #16a36a; border-color: #16a36a; }
 .btn-primary:hover, .flash-button:hover { background: #0f8052; border-color: #0f8052; }
 .flash-button { min-height: 52px; border-radius: 8px; font-weight: 700; box-shadow: 0 6px 14px rgba(22, 163, 106, .2); }
+.upgrade-action-hint { display: flex; justify-content: center; align-items: center; gap: .45rem; margin-top: .65rem; padding: .7rem .8rem; border: 1px solid #8bddaf; border-radius: 8px; background: #e8faef; color: #126c46; font-size: .9rem; font-weight: 700; }
+.upgrade-action-hint i { color: #16a36a; }
 .btn-outline-primary { color: #128457; border-color: #6ac79a; }
 .btn-outline-primary:hover { color: #fff; background: #16a36a; border-color: #16a36a; }
 .btn-check:checked + .btn-outline-primary { color: #fff; background: #16a36a; border-color: #16a36a; }

@@ -106,6 +106,7 @@ class ModernESPLaunchpad {
         // Flash options elements
         this.flashButton = document.getElementById('flashButton');
         this.flashButtonText = document.getElementById('flashButtonText');
+        this.upgradeActionHint = document.getElementById('upgradeActionHint');
         this.eraseFlashBtn = document.getElementById('eraseFlashBtn');
         this.clearFilesBtn = document.getElementById('clearFilesBtn');
         this.validateFilesBtn = document.getElementById('validateFilesBtn');
@@ -764,7 +765,7 @@ class ModernESPLaunchpad {
                 this.flashButtonText.textContent = '请选择应用';
                 this.flashButton.className = 'btn btn-warning btn-lg flash-button';
             } else {
-                this.flashButtonText.textContent = '开始烧录';
+                this.flashButtonText.textContent = '开始升级';
                 this.flashButton.className = 'btn btn-primary btn-lg flash-button';
             }
         } else {
@@ -792,10 +793,10 @@ class ModernESPLaunchpad {
                 this.flashButtonText.textContent = '请输入固件地址';
                 this.flashButton.className = 'btn btn-warning btn-lg flash-button';
             } else if (!allValid) {
-                this.flashButtonText.textContent = '修复地址错误后烧录';
+                this.flashButtonText.textContent = '修复地址错误后升级';
                 this.flashButton.className = 'btn btn-warning btn-lg flash-button';
             } else {
-                this.flashButtonText.textContent = '开始烧录';
+                this.flashButtonText.textContent = '开始升级';
                 this.flashButton.className = 'btn btn-primary btn-lg flash-button';
             }
         }
@@ -1058,6 +1059,7 @@ class ModernESPLaunchpad {
             this.statusText.textContent = '已连接';
             this.connectToggleBtn.innerHTML = '<i class="fas fa-unlink me-1"></i><span>断开连接</span>';
             this.connectToggleBtn.className = 'btn btn-outline-danger btn-sm ms-2';
+            if (this.upgradeActionHint) this.upgradeActionHint.hidden = false;
             
             // 显示设备信息
             this.deviceInfoMini.classList.remove('d-none');
@@ -1067,7 +1069,7 @@ class ModernESPLaunchpad {
             this.resetDeviceBtn.disabled = false;
             
             // 更新状态提示
-            this.alertMessage.textContent = `设备已连接 - ${this.displayChipName}，您可以选择固件进行烧录。`;
+            this.alertMessage.textContent = `设备已连接 - ${this.displayChipName}，点击升级按钮即可完成 4.0 升级。`;
             this.statusAlert.className = 'alert alert-success alert-dismissible fade show modern-alert';
             this.statusAlert.querySelector('i').className = 'fas fa-check-circle me-2';
             
@@ -1077,6 +1079,7 @@ class ModernESPLaunchpad {
             this.statusText.textContent = '未连接';
             this.connectToggleBtn.innerHTML = '<i class="fas fa-plug me-1"></i><span>连接设备</span>';
             this.connectToggleBtn.className = 'btn btn-outline-primary btn-sm ms-2';
+            if (this.upgradeActionHint) this.upgradeActionHint.hidden = true;
             
             // 隐藏设备信息
             this.deviceInfoMini.classList.add('d-none');
