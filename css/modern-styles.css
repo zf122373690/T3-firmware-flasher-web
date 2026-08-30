@@ -184,6 +184,10 @@ body.modern-body {
 .status-dot.connected { color: #46d994; }
 .connection-status .btn-outline-primary { color: #b9f2d5; border-color: #4fae7f; }
 .connection-status .btn-outline-primary:hover { color: #14221d; background: #7be0ac; border-color: #7be0ac; }
+.serial-picker-hint { display: inline-flex; align-items: center; margin-left: .7rem; color: #93afa1; font-size: .7rem; white-space: nowrap; }
+.serial-picker-hint::before { content: ''; width: 5px; height: 5px; margin-right: .35rem; border-radius: 50%; background: #6d8b7c; }
+.serial-picker-hint.active { color: #b9f2d5; }
+.serial-picker-hint.active::before { background: #7be0ac; animation: pulse 1.2s infinite; }
 
 .main-content { padding: 1.5rem 0 2.5rem; }
 .main-content > .container-fluid { max-width: 1440px; }
@@ -234,6 +238,7 @@ body.modern-body {
     .device-status-panel .status-indicator { margin-right: .35rem !important; }
     .device-info-mini { display: none !important; }
     .connection-status .btn { font-size: .72rem; }
+    .serial-picker-hint { display: none; }
     .main-content { padding: 1rem 0 1.5rem; }
     .main-content > .container-fluid { padding-left: .75rem !important; padding-right: .75rem !important; }
     .modern-alert { font-size: .8rem; padding: .65rem .75rem; }
