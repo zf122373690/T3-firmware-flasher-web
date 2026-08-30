@@ -82,6 +82,7 @@ class ModernESPLaunchpad {
         this.progressCard = document.getElementById('progressCard');
         // Connection elements
         this.connectToggleBtn = document.getElementById('connectToggleBtn');
+        this.serialPickerHint = document.getElementById('serialPickerHint');
         this.statusIndicator = document.getElementById('statusIndicator');
         this.statusText = document.getElementById('statusText');
         this.deviceInfoMini = document.getElementById('deviceInfoMini');
@@ -846,6 +847,10 @@ class ModernESPLaunchpad {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 this.addConsoleMessage(`正在连接设备... (尝试 ${attempt}/${maxRetries})`, 'info');
+                if (this.serialPickerHint) {
+                    this.serialPickerHint.textContent = '请在弹窗中选择 USB JTAG/serial debug unit';
+                    this.serialPickerHint.classList.add('active');
+                }
                 
                 if (!this.ESPLoader) {
                     throw new Error('ESP库未加载，无法连接设备');
@@ -958,6 +963,10 @@ class ModernESPLaunchpad {
             
             this.isConnected = true;
             this.updateConnectionStatus();
+            if (this.serialPickerHint) {
+                this.serialPickerHint.textContent = '设备已授权，可开始升级';
+                this.serialPickerHint.classList.remove('active');
+            }
             this.addConsoleMessage(`设备连接成功: ${this.displayChipName}`, 'success');
             
             // 获取 MAC 地址
@@ -990,6 +999,10 @@ class ModernESPLaunchpad {
             console.error('Connection error:', error);
             this.isConnected = false;
             this.updateConnectionStatus();
+            if (this.serialPickerHint) {
+                this.serialPickerHint.textContent = '首次连接请选择 USB JTAG/serial debug unit';
+                this.serialPickerHint.classList.remove('active');
+            }
             
             throw error; // 重新抛出错误供重试机制处理
         }
