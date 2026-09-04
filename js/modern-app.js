@@ -915,6 +915,48 @@ class ModernESPLaunchpad {
         }
     }
     
+    createEsp32Terminal() {
+        this.esp32TerminalBuffer = '';
+        const write = (message = '') => {
+            const text = String(message).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+            this.esp32TerminalBuffer += text;
+            const lines = this.esp32TerminalBuffer.split(/\r?\n/);
+            this.esp32TerminalBuffer = lines.pop() || '';
+            lines.filter(line => line.trim()).forEach(line => {
+                this.addEsp32SerialLog(line);
+            });
+        };
+
+        return {
+            write,
+            writeLine: (message = '') => {
+                write(`${message}\n`);
+            }
+        };
+    }
+
+    addEsp32SerialLog(message) {
+        if (!this.consoleOutput) {
+            console.log('[ESP32 串口]', message);
+            return;
+        }
+
+        const messageElement = document.createElement('div');
+        messageElement.className = 'console-line';
+
+        const timestampElement = document.createElement('span');
+        timestampElement.className = 'console-timestamp';
+        timestampElement.textContent = `[${new Date().toLocaleTimeString()}]`;
+
+        const textElement = document.createElement('span');
+        textElement.className = 'console-text';
+        textElement.textContent = `[ESP32 串口] ${message}`;
+
+        messageElement.append(timestampElement, textElement);
+        this.consoleOutput.appendChild(messageElement);
+        this.scrollConsoleToBottom();
+    }
+
     async performConnection() {
         try {
             this.addConsoleMessage('创建 ESP 加载器...', 'info');
@@ -923,11 +965,13 @@ class ModernESPLaunchpad {
             const flashBaudrate = parseInt(this.flashBaudrateSelect?.value || '460800');
             this.addConsoleMessage(`使用波特率: ${flashBaudrate}`, 'info');
             
+            const esp32Terminal = this.createEsp32Terminal();
             this.esploader = new this.ESPLoader({
                 transport: this.transport,
                 baudrate: flashBaudrate,
                 romBaudrate: 115200,
-                enableTracing: false
+                terminal: esp32Terminal,
+                enableTracing: true
             });
 
             this.addConsoleMessage('正在连接并检测芯片...', 'info');
