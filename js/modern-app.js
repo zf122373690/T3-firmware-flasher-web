@@ -73,6 +73,25 @@ class ModernESPLaunchpad {
         return /Electron/i.test(navigator.userAgent);
     }
 
+    // 语音播报（系统内置 TTS，中文优先）
+    getVoiceEnabled() {
+        return this.voiceSwitch ? this.voiceSwitch.checked : false;
+    }
+
+    speak(text) {
+        if (!this.getVoiceEnabled() || !('speechSynthesis' in window)) return;
+        try {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'zh-CN';
+            utterance.rate = 1.1;
+            // 打断未播完的旧消息，避免提示堆积
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(utterance);
+        } catch (e) {
+            console.warn('语音播报失败:', e);
+        }
+    }
+
     // 检查是否为不支持的浏览器
     isWebUSBSerialSupported() {
         let isSafari =
@@ -112,6 +131,17 @@ class ModernESPLaunchpad {
             });
         }
 
+        // 初始化语音播报开关（记忆上次选择）
+        if (this.voiceSwitch) {
+            this.voiceSwitch.checked = localStorage.getItem('t3VoiceEnabled') !== '0';
+            this.voiceSwitch.addEventListener('change', () => {
+                localStorage.setItem('t3VoiceEnabled', this.voiceSwitch.checked ? '1' : '0');
+                if (this.voiceSwitch.checked) {
+                    this.speak('语音播报已开启');
+                }
+            });
+        }
+
         await this.loadConfiguration();
 
         // 启动插线自动识别（Web Serial connect/disconnect 事件）
@@ -125,6 +155,7 @@ class ModernESPLaunchpad {
         this.connectToggleBtn = document.getElementById('connectToggleBtn');
         this.serialPickerHint = document.getElementById('serialPickerHint');
         this.autoFlashSwitch = document.getElementById('autoFlashSwitch');
+        this.voiceSwitch = document.getElementById('voiceSwitch');
         this.statusIndicator = document.getElementById('statusIndicator');
         this.statusText = document.getElementById('statusText');
         this.deviceInfoMini = document.getElementById('deviceInfoMini');
@@ -1006,6 +1037,7 @@ class ModernESPLaunchpad {
             if (this.getAutoFlashEnabled() && this.isFirmwareReady()) {
                 if (this.autoFailCount >= 3) {
                     this.addConsoleMessage('自动升级已连续失败 3 次，暂停自动烧录。请手动点击"开始升级"重试，成功后会自动恢复', 'warning');
+                    this.speak('自动升级已暂停，请检查设备');
                 } else {
                     this.addConsoleMessage('自动模式：固件已就绪，3 秒后自动开始升级...', 'success');
                     this.autoFlashPending = true;
@@ -1393,6 +1425,7 @@ class ModernESPLaunchpad {
                 this.serialPickerHint.classList.remove('active');
             }
             this.addConsoleMessage(`设备连接成功: ${this.displayChipName}`, 'success');
+            this.speak('设备已连接');
             
             // 获取 MAC 地址
             try {
@@ -1608,6 +1641,7 @@ class ModernESPLaunchpad {
             this.forceConsoleRefresh();
             
             this.addConsoleMessage('开始烧录固件...', 'info');
+            this.speak('开始升级');
             this.updateProgress('准备烧录...', 0);
 
             const isQuickStart = this.quickStartMode.checked;
@@ -1642,6 +1676,7 @@ class ModernESPLaunchpad {
             }
             this.updateProgress('烧录完成', 100);
             if (autoTriggered) this.autoFailCount = 0;
+            this.speak(autoTriggered ? '升级成功，请插入下一台设备' : '升级成功');
 
             // 设备已在升级中拔出的情况：释放端口并恢复等待状态
             if (this.deviceRemovedDuringFlash) {
@@ -1661,6 +1696,7 @@ class ModernESPLaunchpad {
 
         } catch (error) {
             this.addConsoleMessage(`烧录失败: ${error.message}`, 'error');
+            this.speak('升级失败，请检查设备');
             console.error('Flash error:', error);
             // 烧录失败也恢复连接提示卡片，隐藏进度卡片
             if (this.statusAlert) this.statusAlert.style.display = '';
