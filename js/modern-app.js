@@ -30,6 +30,8 @@ class ModernESPLaunchpad {
         this.monitorActive = false;       // 正在读取串口日志
         this.monitorPort = null;          // 监视器占用的串口
         this.monitorReader = null;        // 当前读取器
+        this.monitorWaiting = false;      // 已点击读取日志但设备未插入，等待插入后自动连接
+        this.monitorAutoRestart = false;  // 日志读取中设备被拔出，重新插入后自动恢复
 
         // 固件缓存（按 URL，会话内只下载一次，避免反复下载）
         this.firmwareCache = null;
@@ -963,6 +965,14 @@ class ModernESPLaunchpad {
     }
 
     async handleDeviceArrival(port) {
+        // 串口日志优先：等待插入/自动恢复模式下，插入设备即自动恢复日志读取，
+        // 不受自动烧录开关影响
+        if ((this.monitorWaiting || this.monitorAutoRestart) && !this.isFlashing && !this.isConnected && !this.autoConnecting) {
+            this.monitorWaiting = false;
+            await this.startSerialMonitor(port);
+            return;
+        }
+
         if (!this.getAutoFlashEnabled()) {
             this.addConsoleMessage('检测到设备插入（自动模式已关闭，请手动连接）', 'info');
             return;
@@ -991,10 +1001,11 @@ class ModernESPLaunchpad {
             return;
         }
 
-        // 监视器占用的串口被拔出：先释放监视器
+        // 监视器占用的串口被拔出：释放并标记自动恢复，重新插入后自动继续读日志
         if (port === this.monitorPort) {
             await this.stopSerialMonitor(true);
-            this.addConsoleMessage('串口日志连接已断开（设备已拔出）', 'warning');
+            this.monitorAutoRestart = true;
+            this.addConsoleMessage('设备已拔出，重新插入后将自动恢复日志读取', 'info');
         }
 
         if (port === this.device || this.isConnected) {
@@ -1087,14 +1098,14 @@ class ModernESPLaunchpad {
     // 不进入下载模式，直接以普通串口方式打开设备，持续读取运行日志。
     // 稳定连接模式：DTR=1/RTS=0（USB CDC 场景）；防复位模式：DTR=RTS=0，避免 ESP32 串口复位。
     async toggleSerialMonitor() {
-        if (this.monitorActive) {
+        if (this.monitorActive || this.monitorWaiting) {
             await this.stopSerialMonitor();
         } else {
             await this.startSerialMonitor();
         }
     }
 
-    async startSerialMonitor() {
+    async startSerialMonitor(portHint = null) {
         if (!('serial' in navigator)) {
             this.addConsoleMessage('当前浏览器不支持 WebSerial，无法读取串口日志', 'error');
             return;
@@ -1104,7 +1115,7 @@ class ModernESPLaunchpad {
             return;
         }
 
-        let port = this.monitorPort;
+        let port = portHint || this.monitorPort;
         if (!port) {
             const ports = await navigator.serial.getPorts();
             port = ports.length > 0 ? ports[ports.length - 1] : null;
@@ -1113,7 +1124,11 @@ class ModernESPLaunchpad {
                 try {
                     port = await navigator.serial.requestPort({ filters: this.usbPortFilters });
                 } catch (e) {
-                    this.addConsoleMessage('未选择串口，已取消日志读取', 'info');
+                    // 没有可选设备：进入等待状态，设备插入后自动连接读取日志
+                    this.monitorWaiting = true;
+                    this.monitorAutoRestart = false;
+                    this.updateMonitorButton();
+                    this.addConsoleMessage('未检测到设备，等待设备插入后将自动连接并读取日志', 'info');
                     return;
                 }
             }
@@ -1140,6 +1155,8 @@ class ModernESPLaunchpad {
 
             this.monitorPort = port;
             this.monitorActive = true;
+            this.monitorWaiting = false;
+            this.monitorAutoRestart = false;
             this.updateMonitorButton();
             this.addConsoleMessage(`串口日志已连接：${baudrate} 波特率 · ${mode === 'safe' ? '防复位' : '稳定连接'}模式`, 'success');
             this.readMonitorLoop(port);
@@ -1190,6 +1207,9 @@ class ModernESPLaunchpad {
     async stopSerialMonitor(silent = false) {
         const hadPort = this.monitorPort;
         this.monitorActive = false;
+        this.monitorWaiting = false;
+        // 手动停止时取消自动恢复；设备拔出（silent）时保留，重插后自动恢复
+        if (!silent) this.monitorAutoRestart = false;
         try {
             if (this.monitorReader) await this.monitorReader.cancel();
         } catch (e) { /* ignore */ }
@@ -1213,6 +1233,9 @@ class ModernESPLaunchpad {
         if (this.monitorActive) {
             this.monitorBtnText.textContent = '停止日志';
             this.monitorToggleBtn.className = 'btn btn-outline-danger btn-sm';
+        } else if (this.monitorWaiting) {
+            this.monitorBtnText.textContent = '等待设备';
+            this.monitorToggleBtn.className = 'btn btn-outline-warning btn-sm';
         } else {
             this.monitorBtnText.textContent = '读取日志';
             this.monitorToggleBtn.className = 'btn btn-outline-success btn-sm';
