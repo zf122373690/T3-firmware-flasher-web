@@ -1,12 +1,43 @@
 {
     "name": "t3-firmware-flasher",
+    "productName": "T3副卡宝烧录工具",
     "version": "1.0.0",
     "description": "T3 副卡宝固件升级工具（Electron 桌面版，插线自动烧录，免手动授权）",
+    "author": "zf122373690",
     "main": "electron/main.js",
     "scripts": {
-        "start": "electron ."
+        "start": "electron .",
+        "dist": "electron-builder --win portable --x64"
     },
     "devDependencies": {
-        "electron": "^33.0.0"
+        "electron": "^33.0.0",
+        "electron-builder": "^25.1.8"
+    },
+    "build": {
+        "appId": "com.t3.firmware.flasher",
+        "productName": "T3副卡宝烧录工具",
+        "directories": {
+            "output": "release-electron"
+        },
+        "files": [
+            "electron/**",
+            "js/**",
+            "css/**",
+            "assets/**",
+            "config/**",
+            "index.html"
+        ],
+        "win": {
+            "target": [
+                {
+                    "target": "portable",
+                    "arch": ["x64"]
+                }
+            ],
+            "signAndEditExecutable": false
+        },
+        "portable": {
+            "artifactName": "T3副卡宝烧录工具-便携版.exe"
+        }
     }
 }

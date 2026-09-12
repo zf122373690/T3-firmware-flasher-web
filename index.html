@@ -132,9 +132,22 @@
                             <div id="diyPanel" style="display: none;">
                                 <div class="alert alert-info border-0 mb-2 py-2">
                                     <i class="fas fa-info-circle me-1"></i>
-                                    <small>填写 OpenList 网盘直链并设置 Flash 地址</small>
+                                    <small>选择本地 .bin 文件，或填写 OpenList 网盘直链（本地文件优先）</small>
                                 </div>
-                                
+
+                                <!-- Local File Selection -->
+                                <div class="mb-2">
+                                    <label class="form-label form-label-sm">本地固件文件</label>
+                                    <div class="file-upload-area" id="fileUploadArea" style="cursor: pointer;">
+                                        <div class="upload-content">
+                                            <i class="fas fa-folder-open upload-icon-sm"></i>
+                                            <p class="upload-text-sm mb-1">点击选择本地 .bin 固件文件</p>
+                                            <small class="text-muted">选择后从下方设定的 Flash 地址开始烧录</small>
+                                        </div>
+                                        <input type="file" class="d-none" id="firmwareFileInput" accept=".bin">
+                                    </div>
+                                </div>
+
                                 <div class="mb-2">
                                     <label class="form-label form-label-sm">OpenList 网盘地址</label>
                                     <input type="url" class="form-control form-control-sm" id="firmwareUrlInput" placeholder="https://你的域名/d/固件.bin" autocomplete="off">

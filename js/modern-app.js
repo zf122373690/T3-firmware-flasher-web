@@ -531,7 +531,7 @@ class ModernESPLaunchpad {
             file: file,
             name: file.name,
             size: file.size,
-            address: '100000' // 默认应用程序地址，使用字符串格式
+            address: '0' // 默认整包固件从 0x0 开始，可在下方地址栏修改
         });
 
         this.updateSingleFileDisplay();
@@ -800,27 +800,20 @@ class ModernESPLaunchpad {
             }
         } else {
             // DIY mode
-            const hasFiles = Boolean(this.firmwareUrlInput?.value.trim());
+            const hasUrl = Boolean(this.firmwareUrlInput?.value.trim());
+            const hasLocalFile = this.selectedFiles.length > 0 && this.selectedFiles[0].file;
+            const hasFiles = hasUrl || hasLocalFile;
             const address = document.getElementById('flashAddressInput')?.value || '0';
             const allValid = this.validateAddress(address);
             const isConnected = this.isConnected;
-            
-            // 添加调试信息
-            console.log('DIY模式按钮状态检查:', {
-                hasFiles,
-                allValid,
-                isConnected,
-                firmwareUrl: this.firmwareUrlInput?.value.trim(),
-                address
-            });
-            
+
             this.flashButton.disabled = !hasFiles || !allValid || !isConnected;
-            
+
             if (!isConnected) {
                 this.flashButtonText.textContent = '请先连接设备';
                 this.flashButton.className = 'btn btn-secondary btn-lg flash-button';
             } else if (!hasFiles) {
-                this.flashButtonText.textContent = '请输入固件地址';
+                this.flashButtonText.textContent = '请选择固件';
                 this.flashButton.className = 'btn btn-warning btn-lg flash-button';
             } else if (!allValid) {
                 this.flashButtonText.textContent = '修复地址错误后升级';
@@ -1123,6 +1116,9 @@ class ModernESPLaunchpad {
             write,
             writeLine: (message = '') => {
                 write(`${message}\n`);
+            },
+            clean: () => {
+                this.esp32TerminalBuffer = '';
             }
         };
     }
@@ -1492,16 +1488,27 @@ class ModernESPLaunchpad {
     }
 
     async flashCustomMode() {
-        const firmwareUrl = this.firmwareUrlInput?.value.trim();
         const addressText = document.getElementById('flashAddressInput')?.value || '0';
-        if (!firmwareUrl) throw new Error('请输入 OpenList 固件地址');
         if (!this.validateAddress(addressText)) throw new Error('Flash 地址格式不正确');
-
         const address = parseInt(addressText.replace(/^0x/i, ''), 16);
-        this.addConsoleMessage(`读取自定义固件: ${firmwareUrl}`, 'info');
-        this.updateProgress('正在读取 OpenList 固件...', 10);
-        const fileData = await this.downloadRemoteFirmware(firmwareUrl);
-        this.addConsoleMessage(`开始写入固件 (${this.formatFileSize(fileData.length)}) 到 0x${address.toString(16)}...`, 'info');
+
+        // 本地文件优先，其次 OpenList 直链
+        const localFile = this.selectedFiles.length > 0 ? this.selectedFiles[0] : null;
+        let fileData;
+        if (localFile && localFile.file) {
+            this.addConsoleMessage(`读取本地固件: ${localFile.name}`, 'info');
+            this.updateProgress('正在读取本地固件...', 10);
+            fileData = await this.readFileAsBinaryString(localFile.file);
+            this.addConsoleMessage(`开始写入固件 (${this.formatFileSize(localFile.size)}) 到 0x${address.toString(16)}...`, 'info');
+        } else {
+            const firmwareUrl = this.firmwareUrlInput?.value.trim();
+            if (!firmwareUrl) throw new Error('请选择本地固件文件或输入 OpenList 固件地址');
+            this.addConsoleMessage(`读取自定义固件: ${firmwareUrl}`, 'info');
+            this.updateProgress('正在读取 OpenList 固件...', 10);
+            fileData = await this.downloadRemoteFirmware(firmwareUrl);
+            this.addConsoleMessage(`开始写入固件 (${this.formatFileSize(fileData.length)}) 到 0x${address.toString(16)}...`, 'info');
+        }
+
         await this.esploader.writeFlash({
             fileArray: [{ data: fileData, address }],
             flashSize: 'keep',
