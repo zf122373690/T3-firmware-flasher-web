@@ -255,6 +255,19 @@
                                     控制台
                                 </h6>
                                 <div class="console-controls">
+                                    <select id="monitorBaudrateSelect" class="form-select form-select-sm" style="width: auto;" title="日志波特率">
+                                        <option value="115200" selected>115200</option>
+                                        <option value="74880">74880</option>
+                                        <option value="9600">9600</option>
+                                    </select>
+                                    <select id="monitorModeSelect" class="form-select form-select-sm" style="width: auto;" title="连接模式">
+                                        <option value="cdc" selected>稳定连接</option>
+                                        <option value="safe">防复位</option>
+                                    </select>
+                                    <button class="btn btn-outline-success btn-sm" id="monitorToggleBtn">
+                                        <i class="fas fa-wave-square me-1"></i>
+                                        <span id="monitorBtnText">读取日志</span>
+                                    </button>
                                     <button class="btn btn-outline-secondary btn-sm" id="clearConsoleBtn">
                                         <i class="fas fa-eraser me-1"></i>
                                         清空

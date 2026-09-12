@@ -17,7 +17,7 @@
         "appId": "com.t3.firmware.flasher",
         "productName": "T3副卡宝烧录工具",
         "directories": {
-            "output": "release-electron"
+            "output": "app-dist"
         },
         "files": [
             "electron/**",

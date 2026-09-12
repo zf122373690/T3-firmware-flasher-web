@@ -20,6 +20,11 @@ class ModernESPLaunchpad {
         this.autoFlashArmed = true;       // 自动烧录已就绪（防止烧录完成后 USB 重枚举导致重复烧录）
         this.armTimer = null;             // 延迟恢复自动模式的去抖定时器
         this.deviceRemovedDuringFlash = false; // 烧录过程中设备被拔出的标记
+
+        // 串口日志监视器状态（参考 T3本地工具 串口模式）
+        this.monitorActive = false;       // 正在读取串口日志
+        this.monitorPort = null;          // 监视器占用的串口
+        this.monitorReader = null;        // 当前读取器
         
         // 应用配置列表 - 可从外部配置文件加载
         this.availableApplications = [
@@ -169,6 +174,12 @@ class ModernESPLaunchpad {
         this.clearConsoleBtn = document.getElementById('clearConsoleBtn');
         this.resetDeviceBtn = document.getElementById('resetDeviceBtn');
 
+        // Serial monitor elements（参考 T3本地工具 串口模式）
+        this.monitorToggleBtn = document.getElementById('monitorToggleBtn');
+        this.monitorBtnText = document.getElementById('monitorBtnText');
+        this.monitorBaudrateSelect = document.getElementById('monitorBaudrateSelect');
+        this.monitorModeSelect = document.getElementById('monitorModeSelect');
+
         // QR Code elements
         this.qrCodeCard = document.getElementById('qrCodeCard');
         this.qrCodesContainer = document.getElementById('qrCodesContainer');
@@ -230,6 +241,9 @@ class ModernESPLaunchpad {
         }
         if (this.resetDeviceBtn) {
             this.resetDeviceBtn.addEventListener('click', () => this.resetDevice());
+        }
+        if (this.monitorToggleBtn) {
+            this.monitorToggleBtn.addEventListener('click', () => this.toggleSerialMonitor());
         }
 
         // Success modal reset button
@@ -932,6 +946,12 @@ class ModernESPLaunchpad {
             return;
         }
 
+        // 监视器占用的串口被拔出：先释放监视器
+        if (port === this.monitorPort) {
+            await this.stopSerialMonitor(true);
+            this.addConsoleMessage('串口日志连接已断开（设备已拔出）', 'warning');
+        }
+
         if (port === this.device || this.isConnected) {
             await this.cleanupConnection();
             this.addConsoleMessage('设备已拔出', 'info');
@@ -955,6 +975,10 @@ class ModernESPLaunchpad {
 
     async tryAutoConnect(reason, port = null) {
         if (this.autoConnecting) return;
+        // 监视器占用串口时先释放，避免自动连接打开失败
+        if (this.monitorActive) {
+            await this.stopSerialMonitor(true);
+        }
         this.autoConnecting = true;
 
         try {
@@ -1023,7 +1047,172 @@ class ModernESPLaunchpad {
     }
     // ========== 自动识别烧录结束 ==========
 
+    // ========== 串口日志监视器（参考 T3本地工具 串口模式） ==========
+    // 不进入下载模式，直接以普通串口方式打开设备，持续读取运行日志。
+    // 稳定连接模式：DTR=1/RTS=0（USB CDC 场景）；防复位模式：DTR=RTS=0，避免 ESP32 串口复位。
+    async toggleSerialMonitor() {
+        if (this.monitorActive) {
+            await this.stopSerialMonitor();
+        } else {
+            await this.startSerialMonitor();
+        }
+    }
+
+    async startSerialMonitor() {
+        if (!('serial' in navigator)) {
+            this.addConsoleMessage('当前浏览器不支持 WebSerial，无法读取串口日志', 'error');
+            return;
+        }
+        if (this.isFlashing || this.isConnected) {
+            this.addConsoleMessage('设备正用于烧录，请先断开烧录连接再读取日志', 'warning');
+            return;
+        }
+
+        let port = this.monitorPort;
+        if (!port) {
+            const ports = await navigator.serial.getPorts();
+            port = ports.length > 0 ? ports[ports.length - 1] : null;
+            if (!port) {
+                // 按钮点击属于用户手势，可以直接弹出授权（Electron 下自动选择不弹窗）
+                try {
+                    port = await navigator.serial.requestPort({ filters: this.usbPortFilters });
+                } catch (e) {
+                    this.addConsoleMessage('未选择串口，已取消日志读取', 'info');
+                    return;
+                }
+            }
+        }
+
+        const baudrate = parseInt(this.monitorBaudrateSelect?.value || '115200');
+        const mode = this.monitorModeSelect?.value || 'cdc';
+        const dtr = mode === 'safe' ? false : true;
+        const rts = false;
+
+        try {
+            await port.open({
+                baudRate: baudrate,
+                dataBits: 8,
+                parity: 'none',
+                stopBits: 1,
+                flowControl: 'none'
+            });
+            try {
+                await port.setSignals({ dataTerminalReady: dtr, requestToSend: rts });
+            } catch (e) {
+                console.warn('设置 DTR/RTS 失败（部分串口不支持）:', e);
+            }
+
+            this.monitorPort = port;
+            this.monitorActive = true;
+            this.updateMonitorButton();
+            this.addConsoleMessage(`串口日志已连接：${baudrate} 波特率 · ${mode === 'safe' ? '防复位' : '稳定连接'}模式`, 'success');
+            this.readMonitorLoop(port);
+        } catch (error) {
+            console.error('打开串口日志失败:', error);
+            this.addConsoleMessage(`打开串口失败: ${error.message}。串口可能被其他程序占用，或设备未插入`, 'error');
+        }
+    }
+
+    async readMonitorLoop(port) {
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (port.readable && this.monitorActive && this.monitorPort === port) {
+            const reader = port.readable.getReader();
+            this.monitorReader = reader;
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split(/\r?\n/);
+                    buffer = lines.pop() || '';
+                    lines.forEach((line) => {
+                        if (line.trim()) this.addMonitorLog(line);
+                    });
+                }
+                if (buffer.trim()) this.addMonitorLog(buffer);
+            } catch (error) {
+                if (this.monitorActive) {
+                    this.addConsoleMessage(`串口读取中断: ${error.message}`, 'warning');
+                }
+            } finally {
+                this.monitorReader = null;
+                try { reader.releaseLock(); } catch (e) { /* ignore */ }
+            }
+            break;
+        }
+
+        if (this.monitorPort === port) {
+            if (this.monitorActive) {
+                this.addConsoleMessage('串口日志连接断开，设备可能已拔出', 'warning');
+            }
+            await this.stopSerialMonitor(true);
+        }
+    }
+
+    async stopSerialMonitor(silent = false) {
+        const hadPort = this.monitorPort;
+        this.monitorActive = false;
+        try {
+            if (this.monitorReader) await this.monitorReader.cancel();
+        } catch (e) { /* ignore */ }
+        try {
+            if (this.monitorPort && typeof this.monitorPort.close === 'function') {
+                await this.monitorPort.close();
+            }
+        } catch (e) {
+            console.warn('关闭串口时出错:', e);
+        }
+        this.monitorPort = null;
+        this.monitorReader = null;
+        this.updateMonitorButton();
+        if (!silent && hadPort) {
+            this.addConsoleMessage('串口日志读取已停止', 'info');
+        }
+    }
+
+    updateMonitorButton() {
+        if (!this.monitorToggleBtn) return;
+        if (this.monitorActive) {
+            this.monitorBtnText.textContent = '停止日志';
+            this.monitorToggleBtn.className = 'btn btn-outline-danger btn-sm';
+        } else {
+            this.monitorBtnText.textContent = '读取日志';
+            this.monitorToggleBtn.className = 'btn btn-outline-success btn-sm';
+        }
+    }
+
+    addMonitorLog(message) {
+        if (!this.consoleOutput) return;
+        const messageElement = document.createElement('div');
+        messageElement.className = 'console-line';
+
+        const timestampElement = document.createElement('span');
+        timestampElement.className = 'console-timestamp';
+        timestampElement.textContent = `[${new Date().toLocaleTimeString()}]`;
+
+        const textElement = document.createElement('span');
+        textElement.className = 'console-text';
+        textElement.textContent = `[监视] ${message}`;
+
+        messageElement.append(timestampElement, textElement);
+        this.consoleOutput.appendChild(messageElement);
+
+        // 限制控制台行数，避免长时间挂机内存膨胀
+        while (this.consoleOutput.children.length > 800) {
+            this.consoleOutput.removeChild(this.consoleOutput.firstChild);
+        }
+        this.scrollConsoleToBottom();
+    }
+    // ========== 串口日志监视器结束 ==========
+
     async connect() {
+        // 监视器占用串口时先释放，避免打开失败
+        if (this.monitorActive) {
+            await this.stopSerialMonitor(true);
+        }
+
         const maxRetries = 2; // 最多重试2次
         let lastError = null;
         
