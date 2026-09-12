@@ -1676,7 +1676,7 @@ class ModernESPLaunchpad {
             }
             this.updateProgress('烧录完成', 100);
             if (autoTriggered) this.autoFailCount = 0;
-            this.speak(autoTriggered ? '升级成功，请插入下一台设备' : '升级成功');
+            this.speak(autoTriggered ? '升级完成，请插入下一台设备' : '升级完成');
 
             // 设备已在升级中拔出的情况：释放端口并恢复等待状态
             if (this.deviceRemovedDuringFlash) {
