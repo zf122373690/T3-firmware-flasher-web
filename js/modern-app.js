@@ -55,6 +55,11 @@ class ModernESPLaunchpad {
         this.init();
     }
 
+    // 是否运行在 Electron 桌面壳内（主进程已自动授权串口，无需手动选择）
+    isElectron() {
+        return /Electron/i.test(navigator.userAgent);
+    }
+
     // 检查是否为不支持的浏览器
     isWebUSBSerialSupported() {
         let isSafari =
@@ -878,6 +883,16 @@ class ModernESPLaunchpad {
             this.addConsoleMessage('检测到已授权的设备串口，等待设备插入后将自动识别', 'info');
             // 设备已插着（页面刷新/重开场景）则直接自动连接
             await this.tryAutoConnect('页面加载');
+        } else if (this.isElectron()) {
+            // 桌面版无需授权：首次点击页面任意位置即自动连接
+            this.addConsoleMessage('桌面版模式：插入设备后将自动识别并开始升级', 'info');
+            const onceAuth = () => {
+                document.removeEventListener('click', onceAuth, true);
+                if (!this.isConnected && !this.isFlashing) {
+                    this.tryAutoConnect('页面就绪');
+                }
+            };
+            document.addEventListener('click', onceAuth, true);
         }
     }
 
@@ -955,8 +970,15 @@ class ModernESPLaunchpad {
                 port = ports.length > 0 ? ports[ports.length - 1] : null;
             }
             if (!port) {
-                this.addConsoleMessage('尚未授权任何串口，请点击"连接设备"完成一次授权', 'warning');
-                return;
+                if (this.isElectron()) {
+                    // Electron 主进程已配置自动选择串口，requestPort 不会弹窗
+                    port = await navigator.serial.requestPort({
+                        filters: this.usbPortFilters
+                    });
+                } else {
+                    this.addConsoleMessage('尚未授权任何串口，请点击"连接设备"完成一次授权', 'warning');
+                    return;
+                }
             }
 
             this.addConsoleMessage(`${reason}，正在自动连接设备...`, 'info');
@@ -1016,7 +1038,9 @@ class ModernESPLaunchpad {
             try {
                 this.addConsoleMessage(`正在连接设备... (尝试 ${attempt}/${maxRetries})`, 'info');
                 if (this.serialPickerHint) {
-                    this.serialPickerHint.textContent = '请在弹窗中选择 USB JTAG/serial debug unit';
+                    this.serialPickerHint.textContent = this.isElectron()
+                        ? '桌面版：串口自动选择中'
+                        : '请在弹窗中选择 USB JTAG/serial debug unit';
                     this.serialPickerHint.classList.add('active');
                 }
                 
@@ -1212,7 +1236,9 @@ class ModernESPLaunchpad {
             this.isConnected = false;
             this.updateConnectionStatus();
             if (this.serialPickerHint) {
-                this.serialPickerHint.textContent = '首次连接请选择 USB JTAG/serial debug unit';
+                this.serialPickerHint.textContent = this.isElectron()
+                    ? '桌面版：串口自动选择'
+                    : '首次连接请选择 USB JTAG/serial debug unit';
                 this.serialPickerHint.classList.remove('active');
             }
             
