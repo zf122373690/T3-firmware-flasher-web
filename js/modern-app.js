@@ -17,14 +17,22 @@ class ModernESPLaunchpad {
 
         // 自动模式状态（参考 ESP32S3_AUTO_BURN_TOOL 的插线自动烧录逻辑）
         this.autoConnecting = false;      // 正在执行自动连接，防止重复触发
-        this.autoFlashArmed = true;       // 自动烧录已就绪（防止烧录完成后 USB 重枚举导致重复烧录）
-        this.armTimer = null;             // 延迟恢复自动模式的去抖定时器
         this.deviceRemovedDuringFlash = false; // 烧录过程中设备被拔出的标记
+
+        // 烧录后设备重启会引起 USB 重枚举（旧端口断开、新端口出现），
+        // 这段时间内的 connect 事件不是"新设备插入"，需要忽略以防重复烧录
+        this.REENUM_GUARD_MS = 5000;
+        this.reenumGuardUntil = 0;
+        this.autoFailCount = 0;           // 连续自动升级失败次数（达到 3 次暂停自动烧录）
+        this.autoFlashPending = false;    // 本轮烧录是否由自动模式触发
 
         // 串口日志监视器状态（参考 T3本地工具 串口模式）
         this.monitorActive = false;       // 正在读取串口日志
         this.monitorPort = null;          // 监视器占用的串口
         this.monitorReader = null;        // 当前读取器
+
+        // 固件缓存（按 URL，会话内只下载一次，避免反复下载）
+        this.firmwareCache = null;
         
         // 应用配置列表 - 可从外部配置文件加载
         this.availableApplications = [
@@ -96,7 +104,7 @@ class ModernESPLaunchpad {
             this.autoFlashSwitch.addEventListener('change', () => {
                 localStorage.setItem('t3AutoFlashEnabled', this.autoFlashSwitch.checked ? '1' : '0');
                 if (this.autoFlashSwitch.checked) {
-                    this.autoFlashArmed = true;
+                    this.autoFailCount = 0;
                     this.addConsoleMessage('自动模式已开启：插入设备后将自动识别并开始升级', 'info');
                 } else {
                     this.addConsoleMessage('自动模式已关闭：请手动连接并点击升级', 'info');
@@ -907,25 +915,23 @@ class ModernESPLaunchpad {
         return this.autoFlashSwitch ? this.autoFlashSwitch.checked : true;
     }
 
-    // 固件是否已就绪：快速开始模式默认已选中应用；自定义模式要求填写了 URL 且地址有效
+    // 固件是否已就绪：快速开始模式默认已选中应用；自定义模式要求本地已选文件或填写了 URL，且地址有效
     isFirmwareReady() {
         const isQuickStart = this.quickStartMode && this.quickStartMode.checked;
+        const address = document.getElementById('flashAddressInput')?.value || '';
         if (isQuickStart) {
             return Boolean(this.applicationSelect && this.applicationSelect.value);
         }
-        const url = this.firmwareUrlInput?.value.trim();
-        const address = document.getElementById('flashAddressInput')?.value || '';
-        return Boolean(url) && this.validateAddress(address);
+        const hasUrl = Boolean(this.firmwareUrlInput?.value.trim());
+        const hasLocalFile = this.selectedFiles.length > 0 && this.selectedFiles[0].file;
+        return (hasUrl || hasLocalFile) && this.validateAddress(address);
+    }
+
+    inReenumGuard() {
+        return Date.now() < this.reenumGuardUntil;
     }
 
     async handleDeviceArrival(port) {
-        // 设备重新插回（如烧录后重启导致的 USB 重枚举）会快速触发 connect，
-        // 此时不应重新进入自动模式，否则会反复烧录同一台设备
-        if (this.armTimer) {
-            clearTimeout(this.armTimer);
-            this.armTimer = null;
-        }
-
         if (!this.getAutoFlashEnabled()) {
             this.addConsoleMessage('检测到设备插入（自动模式已关闭，请手动连接）', 'info');
             return;
@@ -935,6 +941,14 @@ class ModernESPLaunchpad {
             return;
         }
         if (this.isConnected || this.autoConnecting) return;
+        if (this.monitorActive) {
+            this.addConsoleMessage('正在读取串口日志，已跳过自动升级（如需升级请先停止日志）', 'info');
+            return;
+        }
+        if (this.inReenumGuard()) {
+            this.addConsoleMessage('设备重启导致的重新枚举，已忽略本次插入', 'info');
+            return;
+        }
 
         await this.tryAutoConnect('检测到设备插入', port);
     }
@@ -956,21 +970,6 @@ class ModernESPLaunchpad {
             await this.cleanupConnection();
             this.addConsoleMessage('设备已拔出', 'info');
         }
-
-        this.scheduleAutoArm();
-    }
-
-    // 延迟恢复自动模式：只有设备真正被拔下（一段时间内没有重新枚举）才重新武装，
-    // 避免设备重启造成的短暂掉线误触发自动烧录
-    scheduleAutoArm() {
-        if (this.armTimer) clearTimeout(this.armTimer);
-        this.armTimer = setTimeout(() => {
-            this.armTimer = null;
-            if (!this.isConnected && !this.isFlashing && this.getAutoFlashEnabled()) {
-                this.autoFlashArmed = true;
-                this.addConsoleMessage('自动模式已就绪，插入设备后将自动开始升级', 'info');
-            }
-        }, 3000);
     }
 
     async tryAutoConnect(reason, port = null) {
@@ -1003,11 +1002,13 @@ class ModernESPLaunchpad {
             this.transport = new this.Transport(port, true);
             await this.performConnection();
 
-            // 连接成功后，固件就绪且自动模式已武装时自动开始升级
+            // 连接成功后，固件就绪即自动开始升级（连续失败达到阈值后暂停，防止无限重试）
             if (this.getAutoFlashEnabled() && this.isFirmwareReady()) {
-                if (this.autoFlashArmed) {
-                    this.autoFlashArmed = false;
+                if (this.autoFailCount >= 3) {
+                    this.addConsoleMessage('自动升级已连续失败 3 次，暂停自动烧录。请手动点击"开始升级"重试，成功后会自动恢复', 'warning');
+                } else {
                     this.addConsoleMessage('自动模式：固件已就绪，3 秒后自动开始升级...', 'success');
+                    this.autoFlashPending = true;
                     setTimeout(() => {
                         if (this.isConnected && !this.isFlashing) {
                             this.startFlashing();
@@ -1019,6 +1020,9 @@ class ModernESPLaunchpad {
             }
         } catch (error) {
             console.warn('自动连接失败:', error);
+            this.autoFailCount++;
+            // 连接失败通常伴随设备复位重枚举，设置保护窗口避免紧密循环重试
+            this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
             this.addConsoleMessage(`自动连接未成功: ${error.message}。设备可能未进入下载模式，请重新插拔设备再试`, 'warning');
             // 清理半打开的连接，等待下一次插拔重试
             this.transport = null;
@@ -1438,6 +1442,8 @@ class ModernESPLaunchpad {
             // 尝试重置设备（可选，如果失败也继续断开连接）
             if (this.esploader && typeof this.esploader.hardReset === 'function') {
                 try {
+                    // 复位会引起 USB 重枚举，设置保护窗口忽略紧接着的 connect 事件
+                    this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
                     await this.esploader.hardReset();
                     this.addConsoleMessage('设备已重置', 'info');
                 } catch (resetError) {
@@ -1466,9 +1472,6 @@ class ModernESPLaunchpad {
             this.transport = null;
             this.device = null;
             this.isConnected = false;
-
-            // 手动断开后重新就绪自动模式，等待下一台设备插入
-            this.scheduleAutoArm();
 
             // 更新UI状态
             this.updateConnectionStatus();
@@ -1587,6 +1590,8 @@ class ModernESPLaunchpad {
 
         try {
             this.isFlashing = true;
+            const autoTriggered = this.autoFlashPending;
+            this.autoFlashPending = false;
             
             // 显示进度卡片
             if (this.progressCard) {
@@ -1620,6 +1625,8 @@ class ModernESPLaunchpad {
             try {
                 if (this.esploader && this.esploader.chip) {
                     if (typeof this.esploader.hardReset === 'function') {
+                        // 复位会引起 USB 重枚举，设置保护窗口忽略紧接着的 connect 事件
+                        this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
                         await this.esploader.hardReset();
                         this.addConsoleMessage('已发送重启命令，设备正在启动新固件...', 'success');
                         await new Promise(resolve => setTimeout(resolve, 1500));
@@ -1634,12 +1641,12 @@ class ModernESPLaunchpad {
                 this.addConsoleMessage('自动重启失败，请手动按一下设备复位键', 'warning');
             }
             this.updateProgress('烧录完成', 100);
+            if (autoTriggered) this.autoFailCount = 0;
 
             // 设备已在升级中拔出的情况：释放端口并恢复等待状态
             if (this.deviceRemovedDuringFlash) {
                 this.deviceRemovedDuringFlash = false;
                 await this.cleanupConnection();
-                this.scheduleAutoArm();
                 return;
             }
 
@@ -1663,8 +1670,12 @@ class ModernESPLaunchpad {
             if (this.deviceRemovedDuringFlash) {
                 this.deviceRemovedDuringFlash = false;
                 await this.cleanupConnection();
-                this.scheduleAutoArm();
                 this.addConsoleMessage('设备已拔出，重新插入后将自动重试升级', 'info');
+            } else if (autoTriggered) {
+                // 自动触发的烧录失败：计入连续失败次数，并设置重枚举保护窗口
+                this.autoFailCount++;
+                this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
+                this.addConsoleMessage(`自动升级失败（连续第 ${this.autoFailCount} 次）${this.autoFailCount >= 3 ? '，已暂停自动烧录' : ''}`, 'warning');
             }
             
             // 显示错误模态框
@@ -1767,7 +1778,13 @@ class ModernESPLaunchpad {
     async downloadRemoteFirmware(url) {
         try {
         this.addConsoleMessage('开始读取内置固件...', 'info');
-            
+
+            // 会话内缓存：同一地址的固件只下载一次，重复烧录/自动重试不再反复下载
+            if (this.firmwareCache && this.firmwareCache.url === url) {
+                this.addConsoleMessage('固件已缓存（本会话下载过），跳过重复下载', 'info');
+                return this.firmwareCache.data;
+            }
+
             const response = await fetch(url);
             if (!response.ok) {
                 throw new Error(`下载失败: ${response.status} ${response.statusText}`);
@@ -1827,6 +1844,9 @@ class ModernESPLaunchpad {
             }
             
             this.addConsoleMessage(`固件下载完成，大小: ${this.formatFileSize(binaryString.length)}`, 'success');
+
+            // 缓存固件数据，供本会话内重复烧录使用
+            this.firmwareCache = { url, data: binaryString };
             
             // 调试信息
             console.log('下载的固件数据类型:', typeof binaryString, '长度:', binaryString.length);
@@ -1938,6 +1958,8 @@ class ModernESPLaunchpad {
                 
                 // 然后执行硬重置确保设备完全重启
                 if (typeof this.esploader.hardReset === 'function') {
+                    // 复位会引起 USB 重枚举，设置保护窗口忽略紧接着的 connect 事件
+                    this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
                     await this.esploader.hardReset();
                     this.addConsoleMessage('硬重置完成', 'info');
                 } else {
