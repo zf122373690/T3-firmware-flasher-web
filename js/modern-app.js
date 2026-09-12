@@ -14,6 +14,12 @@ class ModernESPLaunchpad {
         this.chip = "default";
         this.chipDesc = "default";
         this.displayChipName = "T3 副卡宝";
+
+        // 自动模式状态（参考 ESP32S3_AUTO_BURN_TOOL 的插线自动烧录逻辑）
+        this.autoConnecting = false;      // 正在执行自动连接，防止重复触发
+        this.autoFlashArmed = true;       // 自动烧录已就绪（防止烧录完成后 USB 重枚举导致重复烧录）
+        this.armTimer = null;             // 延迟恢复自动模式的去抖定时器
+        this.deviceRemovedDuringFlash = false; // 烧录过程中设备被拔出的标记
         
         // 应用配置列表 - 可从外部配置文件加载
         this.availableApplications = [
@@ -73,8 +79,25 @@ class ModernESPLaunchpad {
         
         // 添加初始化成功信息
         this.addConsoleMessage('ESP 库加载成功，应用已就绪', 'success');
-        
+
+        // 初始化自动模式开关（记忆上次选择）
+        if (this.autoFlashSwitch) {
+            this.autoFlashSwitch.checked = localStorage.getItem('t3AutoFlashEnabled') !== '0';
+            this.autoFlashSwitch.addEventListener('change', () => {
+                localStorage.setItem('t3AutoFlashEnabled', this.autoFlashSwitch.checked ? '1' : '0');
+                if (this.autoFlashSwitch.checked) {
+                    this.autoFlashArmed = true;
+                    this.addConsoleMessage('自动模式已开启：插入设备后将自动识别并开始升级', 'info');
+                } else {
+                    this.addConsoleMessage('自动模式已关闭：请手动连接并点击升级', 'info');
+                }
+            });
+        }
+
         await this.loadConfiguration();
+
+        // 启动插线自动识别（Web Serial connect/disconnect 事件）
+        await this.setupAutoDetect();
     }
 
     initializeElements() {
@@ -83,6 +106,7 @@ class ModernESPLaunchpad {
         // Connection elements
         this.connectToggleBtn = document.getElementById('connectToggleBtn');
         this.serialPickerHint = document.getElementById('serialPickerHint');
+        this.autoFlashSwitch = document.getElementById('autoFlashSwitch');
         this.statusIndicator = document.getElementById('statusIndicator');
         this.statusText = document.getElementById('statusText');
         this.deviceInfoMini = document.getElementById('deviceInfoMini');
@@ -840,6 +864,150 @@ class ModernESPLaunchpad {
         }
     }
 
+    // ========== 插线自动识别烧录（参考 ESP32S3_AUTO_BURN_TOOL） ==========
+    // 首次使用需点击"连接设备"授权一次；之后通过 Web Serial 的
+    // connect/disconnect 事件感知插拔，插线自动连接，固件就绪即自动升级。
+    async setupAutoDetect() {
+        if (!('serial' in navigator)) return;
+
+        navigator.serial.addEventListener('connect', (e) => this.handleDeviceArrival(e.target));
+        navigator.serial.addEventListener('disconnect', (e) => this.handleDeviceRemoval(e.target));
+
+        const ports = await navigator.serial.getPorts();
+        if (ports.length > 0) {
+            this.addConsoleMessage('检测到已授权的设备串口，等待设备插入后将自动识别', 'info');
+            // 设备已插着（页面刷新/重开场景）则直接自动连接
+            await this.tryAutoConnect('页面加载');
+        }
+    }
+
+    getAutoFlashEnabled() {
+        return this.autoFlashSwitch ? this.autoFlashSwitch.checked : true;
+    }
+
+    // 固件是否已就绪：快速开始模式默认已选中应用；自定义模式要求填写了 URL 且地址有效
+    isFirmwareReady() {
+        const isQuickStart = this.quickStartMode && this.quickStartMode.checked;
+        if (isQuickStart) {
+            return Boolean(this.applicationSelect && this.applicationSelect.value);
+        }
+        const url = this.firmwareUrlInput?.value.trim();
+        const address = document.getElementById('flashAddressInput')?.value || '';
+        return Boolean(url) && this.validateAddress(address);
+    }
+
+    async handleDeviceArrival(port) {
+        // 设备重新插回（如烧录后重启导致的 USB 重枚举）会快速触发 connect，
+        // 此时不应重新进入自动模式，否则会反复烧录同一台设备
+        if (this.armTimer) {
+            clearTimeout(this.armTimer);
+            this.armTimer = null;
+        }
+
+        if (!this.getAutoFlashEnabled()) {
+            this.addConsoleMessage('检测到设备插入（自动模式已关闭，请手动连接）', 'info');
+            return;
+        }
+        if (this.isFlashing) {
+            this.addConsoleMessage('检测到设备插入，正在烧录中，已忽略本次插入', 'warning');
+            return;
+        }
+        if (this.isConnected || this.autoConnecting) return;
+
+        await this.tryAutoConnect('检测到设备插入', port);
+    }
+
+    async handleDeviceRemoval(port) {
+        if (this.isFlashing) {
+            this.deviceRemovedDuringFlash = true;
+            this.addConsoleMessage('烧录过程中设备被拔出，本次升级将中止', 'warning');
+            return;
+        }
+
+        if (port === this.device || this.isConnected) {
+            await this.cleanupConnection();
+            this.addConsoleMessage('设备已拔出', 'info');
+        }
+
+        this.scheduleAutoArm();
+    }
+
+    // 延迟恢复自动模式：只有设备真正被拔下（一段时间内没有重新枚举）才重新武装，
+    // 避免设备重启造成的短暂掉线误触发自动烧录
+    scheduleAutoArm() {
+        if (this.armTimer) clearTimeout(this.armTimer);
+        this.armTimer = setTimeout(() => {
+            this.armTimer = null;
+            if (!this.isConnected && !this.isFlashing && this.getAutoFlashEnabled()) {
+                this.autoFlashArmed = true;
+                this.addConsoleMessage('自动模式已就绪，插入设备后将自动开始升级', 'info');
+            }
+        }, 3000);
+    }
+
+    async tryAutoConnect(reason, port = null) {
+        if (this.autoConnecting) return;
+        this.autoConnecting = true;
+
+        try {
+            if (!port) {
+                const ports = await navigator.serial.getPorts();
+                port = ports.length > 0 ? ports[ports.length - 1] : null;
+            }
+            if (!port) {
+                this.addConsoleMessage('尚未授权任何串口，请点击"连接设备"完成一次授权', 'warning');
+                return;
+            }
+
+            this.addConsoleMessage(`${reason}，正在自动连接设备...`, 'info');
+            this.device = port;
+            this.transport = new this.Transport(port, true);
+            await this.performConnection();
+
+            // 连接成功后，固件就绪且自动模式已武装时自动开始升级
+            if (this.getAutoFlashEnabled() && this.isFirmwareReady()) {
+                if (this.autoFlashArmed) {
+                    this.autoFlashArmed = false;
+                    this.addConsoleMessage('自动模式：固件已就绪，3 秒后自动开始升级...', 'success');
+                    setTimeout(() => {
+                        if (this.isConnected && !this.isFlashing) {
+                            this.startFlashing();
+                        }
+                    }, 3000);
+                }
+            } else {
+                this.addConsoleMessage('设备已连接，请选择固件后点击"开始升级"', 'info');
+            }
+        } catch (error) {
+            console.warn('自动连接失败:', error);
+            this.addConsoleMessage(`自动连接未成功: ${error.message}。设备可能未进入下载模式，请重新插拔设备再试`, 'warning');
+            // 清理半打开的连接，等待下一次插拔重试
+            this.transport = null;
+            this.device = null;
+            this.isConnected = false;
+            this.updateConnectionStatus();
+        } finally {
+            this.autoConnecting = false;
+        }
+    }
+
+    // 释放端口但不复位设备（用于设备拔出/烧录完成后的清理）
+    async cleanupConnection() {
+        if (this.transport && typeof this.transport.disconnect === 'function') {
+            try {
+                await this.transport.disconnect();
+            } catch (e) {
+                console.warn('释放串口时出错:', e);
+            }
+        }
+        this.esploader = null;
+        this.transport = null;
+        this.device = null;
+        this.isConnected = false;
+        this.updateConnectionStatus();
+    }
+    // ========== 自动识别烧录结束 ==========
+
     async connect() {
         const maxRetries = 2; // 最多重试2次
         let lastError = null;
@@ -1087,7 +1255,10 @@ class ModernESPLaunchpad {
             this.transport = null;
             this.device = null;
             this.isConnected = false;
-            
+
+            // 手动断开后重新就绪自动模式，等待下一台设备插入
+            this.scheduleAutoArm();
+
             // 更新UI状态
             this.updateConnectionStatus();
             this.addConsoleMessage('设备已断开连接', 'success');
@@ -1145,7 +1316,9 @@ class ModernESPLaunchpad {
             this.resetDeviceBtn.disabled = true;
             
             // 更新状态提示
-            this.alertMessage.textContent = '请连接您的 T3 设备到 USB 串口，然后点击"连接设备"按钮开始使用。';
+            this.alertMessage.textContent = this.getAutoFlashEnabled()
+                ? '设备已断开。插入设备后将自动识别并升级；也可点击"连接设备"手动连接。'
+                : '请连接您的 T3 设备到 USB 串口，然后点击"连接设备"按钮开始使用。';
             this.statusAlert.className = 'alert alert-info alert-dismissible fade show modern-alert';
             this.statusAlert.querySelector('i').className = 'fas fa-info-circle me-2';
         }
@@ -1250,7 +1423,17 @@ class ModernESPLaunchpad {
                 this.addConsoleMessage('自动重启失败，请手动按一下设备复位键', 'warning');
             }
             this.updateProgress('烧录完成', 100);
-            
+
+            // 设备已在升级中拔出的情况：释放端口并恢复等待状态
+            if (this.deviceRemovedDuringFlash) {
+                this.deviceRemovedDuringFlash = false;
+                await this.cleanupConnection();
+                this.scheduleAutoArm();
+                return;
+            }
+
+            this.addConsoleMessage('升级完成。可拔下设备插入下一台，插入后将自动开始升级', 'success');
+
             // 烧录完成后，恢复连接提示卡片，隐藏进度卡片
             //if (this.statusAlert) this.statusAlert.style.display = '';
             //if (this.progressCard) this.progressCard.style.display = 'none';
@@ -1264,6 +1447,14 @@ class ModernESPLaunchpad {
             // 烧录失败也恢复连接提示卡片，隐藏进度卡片
             if (this.statusAlert) this.statusAlert.style.display = '';
             if (this.progressCard) this.progressCard.style.display = 'none';
+
+            // 设备在烧录中被拔出：释放端口，等待重新插入
+            if (this.deviceRemovedDuringFlash) {
+                this.deviceRemovedDuringFlash = false;
+                await this.cleanupConnection();
+                this.scheduleAutoArm();
+                this.addConsoleMessage('设备已拔出，重新插入后将自动重试升级', 'info');
+            }
             
             // 显示错误模态框
             //this.showErrorModal(error.message);
