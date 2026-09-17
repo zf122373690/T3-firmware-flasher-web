@@ -14,6 +14,27 @@ class ModernESPLaunchpad {
         this.chip = "default";
         this.chipDesc = "default";
         this.displayChipName = "T3 副卡宝";
+
+        // 自动模式状态（参考 ESP32S3_AUTO_BURN_TOOL 的插线自动烧录逻辑）
+        this.autoConnecting = false;      // 正在执行自动连接，防止重复触发
+        this.deviceRemovedDuringFlash = false; // 烧录过程中设备被拔出的标记
+
+        // 烧录后设备重启会引起 USB 重枚举（旧端口断开、新端口出现），
+        // 这段时间内的 connect 事件不是"新设备插入"，需要忽略以防重复烧录
+        this.REENUM_GUARD_MS = 5000;
+        this.reenumGuardUntil = 0;
+        this.autoFailCount = 0;           // 连续自动升级失败次数（达到 3 次暂停自动烧录）
+        this.autoFlashPending = false;    // 本轮烧录是否由自动模式触发
+
+        // 串口日志监视器状态（参考 T3本地工具 串口模式）
+        this.monitorActive = false;       // 正在读取串口日志
+        this.monitorPort = null;          // 监视器占用的串口
+        this.monitorReader = null;        // 当前读取器
+        this.monitorWaiting = false;      // 已点击读取日志但设备未插入，等待插入后自动连接
+        this.monitorAutoRestart = false;  // 日志读取中设备被拔出，重新插入后自动恢复
+
+        // 固件缓存（按 URL，会话内只下载一次，避免反复下载）
+        this.firmwareCache = null;
         
         // 应用配置列表 - 可从外部配置文件加载
         this.availableApplications = [
@@ -49,6 +70,30 @@ class ModernESPLaunchpad {
         this.init();
     }
 
+    // 是否运行在 Electron 桌面壳内（主进程已自动授权串口，无需手动选择）
+    isElectron() {
+        return /Electron/i.test(navigator.userAgent);
+    }
+
+    // 语音播报（系统内置 TTS，中文优先）
+    getVoiceEnabled() {
+        return this.voiceSwitch ? this.voiceSwitch.checked : false;
+    }
+
+    speak(text) {
+        if (!this.getVoiceEnabled() || !('speechSynthesis' in window)) return;
+        try {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'zh-CN';
+            utterance.rate = 1.1;
+            // 打断未播完的旧消息，避免提示堆积
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(utterance);
+        } catch (e) {
+            console.warn('语音播报失败:', e);
+        }
+    }
+
     // 检查是否为不支持的浏览器
     isWebUSBSerialSupported() {
         let isSafari =
@@ -73,8 +118,36 @@ class ModernESPLaunchpad {
         
         // 添加初始化成功信息
         this.addConsoleMessage('ESP 库加载成功，应用已就绪', 'success');
-        
+
+        // 初始化自动模式开关（记忆上次选择）
+        if (this.autoFlashSwitch) {
+            this.autoFlashSwitch.checked = localStorage.getItem('t3AutoFlashEnabled') !== '0';
+            this.autoFlashSwitch.addEventListener('change', () => {
+                localStorage.setItem('t3AutoFlashEnabled', this.autoFlashSwitch.checked ? '1' : '0');
+                if (this.autoFlashSwitch.checked) {
+                    this.autoFailCount = 0;
+                    this.addConsoleMessage('自动模式已开启：插入设备后将自动识别并开始升级', 'info');
+                } else {
+                    this.addConsoleMessage('自动模式已关闭：请手动连接并点击升级', 'info');
+                }
+            });
+        }
+
+        // 初始化语音播报开关（记忆上次选择）
+        if (this.voiceSwitch) {
+            this.voiceSwitch.checked = localStorage.getItem('t3VoiceEnabled') !== '0';
+            this.voiceSwitch.addEventListener('change', () => {
+                localStorage.setItem('t3VoiceEnabled', this.voiceSwitch.checked ? '1' : '0');
+                if (this.voiceSwitch.checked) {
+                    this.speak('语音播报已开启');
+                }
+            });
+        }
+
         await this.loadConfiguration();
+
+        // 启动插线自动识别（Web Serial connect/disconnect 事件）
+        await this.setupAutoDetect();
     }
 
     initializeElements() {
@@ -83,6 +156,8 @@ class ModernESPLaunchpad {
         // Connection elements
         this.connectToggleBtn = document.getElementById('connectToggleBtn');
         this.serialPickerHint = document.getElementById('serialPickerHint');
+        this.autoFlashSwitch = document.getElementById('autoFlashSwitch');
+        this.voiceSwitch = document.getElementById('voiceSwitch');
         this.statusIndicator = document.getElementById('statusIndicator');
         this.statusText = document.getElementById('statusText');
         this.deviceInfoMini = document.getElementById('deviceInfoMini');
@@ -139,6 +214,12 @@ class ModernESPLaunchpad {
         this.consoleOutput = document.getElementById('consoleOutput');
         this.clearConsoleBtn = document.getElementById('clearConsoleBtn');
         this.resetDeviceBtn = document.getElementById('resetDeviceBtn');
+
+        // Serial monitor elements（参考 T3本地工具 串口模式）
+        this.monitorToggleBtn = document.getElementById('monitorToggleBtn');
+        this.monitorBtnText = document.getElementById('monitorBtnText');
+        this.monitorBaudrateSelect = document.getElementById('monitorBaudrateSelect');
+        this.monitorModeSelect = document.getElementById('monitorModeSelect');
 
         // QR Code elements
         this.qrCodeCard = document.getElementById('qrCodeCard');
@@ -201,6 +282,9 @@ class ModernESPLaunchpad {
         }
         if (this.resetDeviceBtn) {
             this.resetDeviceBtn.addEventListener('click', () => this.resetDevice());
+        }
+        if (this.monitorToggleBtn) {
+            this.monitorToggleBtn.addEventListener('click', () => this.toggleSerialMonitor());
         }
 
         // Success modal reset button
@@ -502,7 +586,7 @@ class ModernESPLaunchpad {
             file: file,
             name: file.name,
             size: file.size,
-            address: '100000' // 默认应用程序地址，使用字符串格式
+            address: '0' // 默认整包固件从 0x0 开始，可在下方地址栏修改
         });
 
         this.updateSingleFileDisplay();
@@ -771,27 +855,20 @@ class ModernESPLaunchpad {
             }
         } else {
             // DIY mode
-            const hasFiles = Boolean(this.firmwareUrlInput?.value.trim());
+            const hasUrl = Boolean(this.firmwareUrlInput?.value.trim());
+            const hasLocalFile = this.selectedFiles.length > 0 && this.selectedFiles[0].file;
+            const hasFiles = hasUrl || hasLocalFile;
             const address = document.getElementById('flashAddressInput')?.value || '0';
             const allValid = this.validateAddress(address);
             const isConnected = this.isConnected;
-            
-            // 添加调试信息
-            console.log('DIY模式按钮状态检查:', {
-                hasFiles,
-                allValid,
-                isConnected,
-                firmwareUrl: this.firmwareUrlInput?.value.trim(),
-                address
-            });
-            
+
             this.flashButton.disabled = !hasFiles || !allValid || !isConnected;
-            
+
             if (!isConnected) {
                 this.flashButtonText.textContent = '请先连接设备';
                 this.flashButton.className = 'btn btn-secondary btn-lg flash-button';
             } else if (!hasFiles) {
-                this.flashButtonText.textContent = '请输入固件地址';
+                this.flashButtonText.textContent = '请选择固件';
                 this.flashButton.className = 'btn btn-warning btn-lg flash-button';
             } else if (!allValid) {
                 this.flashButtonText.textContent = '修复地址错误后升级';
@@ -840,7 +917,361 @@ class ModernESPLaunchpad {
         }
     }
 
+    // ========== 插线自动识别烧录（参考 ESP32S3_AUTO_BURN_TOOL） ==========
+    // 首次使用需点击"连接设备"授权一次；之后通过 Web Serial 的
+    // connect/disconnect 事件感知插拔，插线自动连接，固件就绪即自动升级。
+    async setupAutoDetect() {
+        if (!('serial' in navigator)) return;
+
+        navigator.serial.addEventListener('connect', (e) => this.handleDeviceArrival(e.target));
+        navigator.serial.addEventListener('disconnect', (e) => this.handleDeviceRemoval(e.target));
+
+        const ports = await navigator.serial.getPorts();
+        if (ports.length > 0) {
+            this.addConsoleMessage('检测到已授权的设备串口，等待设备插入后将自动识别', 'info');
+            // 设备已插着（页面刷新/重开场景）则直接自动连接
+            await this.tryAutoConnect('页面加载');
+        } else if (this.isElectron()) {
+            // 桌面版无需授权：首次点击页面任意位置即自动连接
+            this.addConsoleMessage('桌面版模式：插入设备后将自动识别并开始升级', 'info');
+            const onceAuth = () => {
+                document.removeEventListener('click', onceAuth, true);
+                if (!this.isConnected && !this.isFlashing) {
+                    this.tryAutoConnect('页面就绪');
+                }
+            };
+            document.addEventListener('click', onceAuth, true);
+        }
+    }
+
+    getAutoFlashEnabled() {
+        return this.autoFlashSwitch ? this.autoFlashSwitch.checked : true;
+    }
+
+    // 固件是否已就绪：快速开始模式默认已选中应用；自定义模式要求本地已选文件或填写了 URL，且地址有效
+    isFirmwareReady() {
+        const isQuickStart = this.quickStartMode && this.quickStartMode.checked;
+        const address = document.getElementById('flashAddressInput')?.value || '';
+        if (isQuickStart) {
+            return Boolean(this.applicationSelect && this.applicationSelect.value);
+        }
+        const hasUrl = Boolean(this.firmwareUrlInput?.value.trim());
+        const hasLocalFile = this.selectedFiles.length > 0 && this.selectedFiles[0].file;
+        return (hasUrl || hasLocalFile) && this.validateAddress(address);
+    }
+
+    inReenumGuard() {
+        return Date.now() < this.reenumGuardUntil;
+    }
+
+    async handleDeviceArrival(port) {
+        // 串口日志优先：等待插入/自动恢复模式下，插入设备即自动恢复日志读取，
+        // 不受自动烧录开关影响
+        if ((this.monitorWaiting || this.monitorAutoRestart) && !this.isFlashing && !this.isConnected && !this.autoConnecting) {
+            this.monitorWaiting = false;
+            await this.startSerialMonitor(port);
+            return;
+        }
+
+        if (!this.getAutoFlashEnabled()) {
+            this.addConsoleMessage('检测到设备插入（自动模式已关闭，请手动连接）', 'info');
+            return;
+        }
+        if (this.isFlashing) {
+            this.addConsoleMessage('检测到设备插入，正在烧录中，已忽略本次插入', 'warning');
+            return;
+        }
+        if (this.isConnected || this.autoConnecting) return;
+        if (this.monitorActive) {
+            this.addConsoleMessage('正在读取串口日志，已跳过自动升级（如需升级请先停止日志）', 'info');
+            return;
+        }
+        if (this.inReenumGuard()) {
+            this.addConsoleMessage('设备重启导致的重新枚举，已忽略本次插入', 'info');
+            return;
+        }
+
+        await this.tryAutoConnect('检测到设备插入', port);
+    }
+
+    async handleDeviceRemoval(port) {
+        if (this.isFlashing) {
+            this.deviceRemovedDuringFlash = true;
+            this.addConsoleMessage('烧录过程中设备被拔出，本次升级将中止', 'warning');
+            return;
+        }
+
+        // 监视器占用的串口被拔出：释放并标记自动恢复，重新插入后自动继续读日志
+        if (port === this.monitorPort) {
+            await this.stopSerialMonitor(true);
+            this.monitorAutoRestart = true;
+            this.addConsoleMessage('设备已拔出，重新插入后将自动恢复日志读取', 'info');
+        }
+
+        if (port === this.device || this.isConnected) {
+            await this.cleanupConnection();
+            this.addConsoleMessage('设备已拔出', 'info');
+        }
+    }
+
+    async tryAutoConnect(reason, port = null) {
+        if (this.autoConnecting) return;
+        // 监视器占用串口时先释放，避免自动连接打开失败
+        if (this.monitorActive) {
+            await this.stopSerialMonitor(true);
+        }
+        this.autoConnecting = true;
+
+        try {
+            if (!port) {
+                const ports = await navigator.serial.getPorts();
+                port = ports.length > 0 ? ports[ports.length - 1] : null;
+            }
+            if (!port) {
+                if (this.isElectron()) {
+                    // Electron 主进程已配置自动选择串口，requestPort 不会弹窗
+                    port = await navigator.serial.requestPort({
+                        filters: this.usbPortFilters
+                    });
+                } else {
+                    this.addConsoleMessage('尚未授权任何串口，请点击"连接设备"完成一次授权', 'warning');
+                    return;
+                }
+            }
+
+            this.addConsoleMessage(`${reason}，正在自动连接设备...`, 'info');
+            this.device = port;
+            this.transport = new this.Transport(port, true);
+            await this.performConnection();
+
+            // 连接成功后，固件就绪即自动开始升级（连续失败达到阈值后暂停，防止无限重试）
+            if (this.getAutoFlashEnabled() && this.isFirmwareReady()) {
+                if (this.autoFailCount >= 3) {
+                    this.addConsoleMessage('自动升级已连续失败 3 次，暂停自动烧录。请手动点击"开始升级"重试，成功后会自动恢复', 'warning');
+                    this.speak('自动升级已暂停，请检查设备');
+                } else {
+                    this.addConsoleMessage('自动模式：固件已就绪，3 秒后自动开始升级...', 'success');
+                    this.autoFlashPending = true;
+                    setTimeout(() => {
+                        if (this.isConnected && !this.isFlashing) {
+                            this.startFlashing();
+                        }
+                    }, 3000);
+                }
+            } else {
+                this.addConsoleMessage('设备已连接，请选择固件后点击"开始升级"', 'info');
+            }
+        } catch (error) {
+            console.warn('自动连接失败:', error);
+            this.autoFailCount++;
+            // 连接失败通常伴随设备复位重枚举，设置保护窗口避免紧密循环重试
+            this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
+            this.addConsoleMessage(`自动连接未成功: ${error.message}。设备可能未进入下载模式，请重新插拔设备再试`, 'warning');
+            // 清理半打开的连接，等待下一次插拔重试
+            this.transport = null;
+            this.device = null;
+            this.isConnected = false;
+            this.updateConnectionStatus();
+        } finally {
+            this.autoConnecting = false;
+        }
+    }
+
+    // 释放端口但不复位设备（用于设备拔出/烧录完成后的清理）
+    async cleanupConnection() {
+        if (this.transport && typeof this.transport.disconnect === 'function') {
+            try {
+                await this.transport.disconnect();
+            } catch (e) {
+                console.warn('释放串口时出错:', e);
+            }
+        }
+        this.esploader = null;
+        this.transport = null;
+        this.device = null;
+        this.isConnected = false;
+        this.updateConnectionStatus();
+    }
+    // ========== 自动识别烧录结束 ==========
+
+    // ========== 串口日志监视器（参考 T3本地工具 串口模式） ==========
+    // 不进入下载模式，直接以普通串口方式打开设备，持续读取运行日志。
+    // 稳定连接模式：DTR=1/RTS=0（USB CDC 场景）；防复位模式：DTR=RTS=0，避免 ESP32 串口复位。
+    async toggleSerialMonitor() {
+        if (this.monitorActive || this.monitorWaiting) {
+            await this.stopSerialMonitor();
+        } else {
+            await this.startSerialMonitor();
+        }
+    }
+
+    async startSerialMonitor(portHint = null) {
+        if (!('serial' in navigator)) {
+            this.addConsoleMessage('当前浏览器不支持 WebSerial，无法读取串口日志', 'error');
+            return;
+        }
+        if (this.isFlashing || this.isConnected) {
+            this.addConsoleMessage('设备正用于烧录，请先断开烧录连接再读取日志', 'warning');
+            return;
+        }
+
+        let port = portHint || this.monitorPort;
+        if (!port) {
+            const ports = await navigator.serial.getPorts();
+            port = ports.length > 0 ? ports[ports.length - 1] : null;
+            if (!port) {
+                // 按钮点击属于用户手势，可以直接弹出授权（Electron 下自动选择不弹窗）
+                try {
+                    port = await navigator.serial.requestPort({ filters: this.usbPortFilters });
+                } catch (e) {
+                    // 没有可选设备：进入等待状态，设备插入后自动连接读取日志
+                    this.monitorWaiting = true;
+                    this.monitorAutoRestart = false;
+                    this.updateMonitorButton();
+                    this.addConsoleMessage('未检测到设备，等待设备插入后将自动连接并读取日志', 'info');
+                    return;
+                }
+            }
+        }
+
+        const baudrate = parseInt(this.monitorBaudrateSelect?.value || '115200');
+        const mode = this.monitorModeSelect?.value || 'cdc';
+        const dtr = mode === 'safe' ? false : true;
+        const rts = false;
+
+        try {
+            await port.open({
+                baudRate: baudrate,
+                dataBits: 8,
+                parity: 'none',
+                stopBits: 1,
+                flowControl: 'none'
+            });
+            try {
+                await port.setSignals({ dataTerminalReady: dtr, requestToSend: rts });
+            } catch (e) {
+                console.warn('设置 DTR/RTS 失败（部分串口不支持）:', e);
+            }
+
+            this.monitorPort = port;
+            this.monitorActive = true;
+            this.monitorWaiting = false;
+            this.monitorAutoRestart = false;
+            this.updateMonitorButton();
+            this.addConsoleMessage(`串口日志已连接：${baudrate} 波特率 · ${mode === 'safe' ? '防复位' : '稳定连接'}模式`, 'success');
+            this.readMonitorLoop(port);
+        } catch (error) {
+            console.error('打开串口日志失败:', error);
+            this.addConsoleMessage(`打开串口失败: ${error.message}。串口可能被其他程序占用，或设备未插入`, 'error');
+        }
+    }
+
+    async readMonitorLoop(port) {
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (port.readable && this.monitorActive && this.monitorPort === port) {
+            const reader = port.readable.getReader();
+            this.monitorReader = reader;
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split(/\r?\n/);
+                    buffer = lines.pop() || '';
+                    lines.forEach((line) => {
+                        if (line.trim()) this.addMonitorLog(line);
+                    });
+                }
+                if (buffer.trim()) this.addMonitorLog(buffer);
+            } catch (error) {
+                if (this.monitorActive) {
+                    this.addConsoleMessage(`串口读取中断: ${error.message}`, 'warning');
+                }
+            } finally {
+                this.monitorReader = null;
+                try { reader.releaseLock(); } catch (e) { /* ignore */ }
+            }
+            break;
+        }
+
+        if (this.monitorPort === port) {
+            if (this.monitorActive) {
+                this.addConsoleMessage('串口日志连接断开，设备可能已拔出', 'warning');
+            }
+            await this.stopSerialMonitor(true);
+        }
+    }
+
+    async stopSerialMonitor(silent = false) {
+        const hadPort = this.monitorPort;
+        this.monitorActive = false;
+        this.monitorWaiting = false;
+        // 手动停止时取消自动恢复；设备拔出（silent）时保留，重插后自动恢复
+        if (!silent) this.monitorAutoRestart = false;
+        try {
+            if (this.monitorReader) await this.monitorReader.cancel();
+        } catch (e) { /* ignore */ }
+        try {
+            if (this.monitorPort && typeof this.monitorPort.close === 'function') {
+                await this.monitorPort.close();
+            }
+        } catch (e) {
+            console.warn('关闭串口时出错:', e);
+        }
+        this.monitorPort = null;
+        this.monitorReader = null;
+        this.updateMonitorButton();
+        if (!silent && hadPort) {
+            this.addConsoleMessage('串口日志读取已停止', 'info');
+        }
+    }
+
+    updateMonitorButton() {
+        if (!this.monitorToggleBtn) return;
+        if (this.monitorActive) {
+            this.monitorBtnText.textContent = '停止日志';
+            this.monitorToggleBtn.className = 'btn btn-outline-danger btn-sm';
+        } else if (this.monitorWaiting) {
+            this.monitorBtnText.textContent = '等待设备';
+            this.monitorToggleBtn.className = 'btn btn-outline-warning btn-sm';
+        } else {
+            this.monitorBtnText.textContent = '读取日志';
+            this.monitorToggleBtn.className = 'btn btn-outline-success btn-sm';
+        }
+    }
+
+    addMonitorLog(message) {
+        if (!this.consoleOutput) return;
+        const messageElement = document.createElement('div');
+        messageElement.className = 'console-line';
+
+        const timestampElement = document.createElement('span');
+        timestampElement.className = 'console-timestamp';
+        timestampElement.textContent = `[${new Date().toLocaleTimeString()}]`;
+
+        const textElement = document.createElement('span');
+        textElement.className = 'console-text';
+        textElement.textContent = `[监视] ${message}`;
+
+        messageElement.append(timestampElement, textElement);
+        this.consoleOutput.appendChild(messageElement);
+
+        // 限制控制台行数，避免长时间挂机内存膨胀
+        while (this.consoleOutput.children.length > 800) {
+            this.consoleOutput.removeChild(this.consoleOutput.firstChild);
+        }
+        this.scrollConsoleToBottom();
+    }
+    // ========== 串口日志监视器结束 ==========
+
     async connect() {
+        // 监视器占用串口时先释放，避免打开失败
+        if (this.monitorActive) {
+            await this.stopSerialMonitor(true);
+        }
+
         const maxRetries = 2; // 最多重试2次
         let lastError = null;
         
@@ -848,7 +1279,9 @@ class ModernESPLaunchpad {
             try {
                 this.addConsoleMessage(`正在连接设备... (尝试 ${attempt}/${maxRetries})`, 'info');
                 if (this.serialPickerHint) {
-                    this.serialPickerHint.textContent = '请在弹窗中选择 USB JTAG/serial debug unit';
+                    this.serialPickerHint.textContent = this.isElectron()
+                        ? '桌面版：串口自动选择中'
+                        : '请在弹窗中选择 USB JTAG/serial debug unit';
                     this.serialPickerHint.classList.add('active');
                 }
                 
@@ -915,6 +1348,51 @@ class ModernESPLaunchpad {
         }
     }
     
+    createEsp32Terminal() {
+        this.esp32TerminalBuffer = '';
+        const write = (message = '') => {
+            const text = String(message).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+            this.esp32TerminalBuffer += text;
+            const lines = this.esp32TerminalBuffer.split(/\r?\n/);
+            this.esp32TerminalBuffer = lines.pop() || '';
+            lines.filter(line => line.trim()).forEach(line => {
+                this.addEsp32SerialLog(line);
+            });
+        };
+
+        return {
+            write,
+            writeLine: (message = '') => {
+                write(`${message}\n`);
+            },
+            clean: () => {
+                this.esp32TerminalBuffer = '';
+            }
+        };
+    }
+
+    addEsp32SerialLog(message) {
+        if (!this.consoleOutput) {
+            console.log('[ESP32 串口]', message);
+            return;
+        }
+
+        const messageElement = document.createElement('div');
+        messageElement.className = 'console-line';
+
+        const timestampElement = document.createElement('span');
+        timestampElement.className = 'console-timestamp';
+        timestampElement.textContent = `[${new Date().toLocaleTimeString()}]`;
+
+        const textElement = document.createElement('span');
+        textElement.className = 'console-text';
+        textElement.textContent = `[ESP32 串口] ${message}`;
+
+        messageElement.append(timestampElement, textElement);
+        this.consoleOutput.appendChild(messageElement);
+        this.scrollConsoleToBottom();
+    }
+
     async performConnection() {
         try {
             this.addConsoleMessage('创建 ESP 加载器...', 'info');
@@ -923,11 +1401,13 @@ class ModernESPLaunchpad {
             const flashBaudrate = parseInt(this.flashBaudrateSelect?.value || '460800');
             this.addConsoleMessage(`使用波特率: ${flashBaudrate}`, 'info');
             
+            const esp32Terminal = this.createEsp32Terminal();
             this.esploader = new this.ESPLoader({
                 transport: this.transport,
                 baudrate: flashBaudrate,
                 romBaudrate: 115200,
-                enableTracing: false
+                terminal: esp32Terminal,
+                enableTracing: true
             });
 
             this.addConsoleMessage('正在连接并检测芯片...', 'info');
@@ -968,6 +1448,7 @@ class ModernESPLaunchpad {
                 this.serialPickerHint.classList.remove('active');
             }
             this.addConsoleMessage(`设备连接成功: ${this.displayChipName}`, 'success');
+            this.speak('设备已连接');
             
             // 获取 MAC 地址
             try {
@@ -1000,7 +1481,9 @@ class ModernESPLaunchpad {
             this.isConnected = false;
             this.updateConnectionStatus();
             if (this.serialPickerHint) {
-                this.serialPickerHint.textContent = '首次连接请选择 USB JTAG/serial debug unit';
+                this.serialPickerHint.textContent = this.isElectron()
+                    ? '桌面版：串口自动选择'
+                    : '首次连接请选择 USB JTAG/serial debug unit';
                 this.serialPickerHint.classList.remove('active');
             }
             
@@ -1015,6 +1498,8 @@ class ModernESPLaunchpad {
             // 尝试重置设备（可选，如果失败也继续断开连接）
             if (this.esploader && typeof this.esploader.hardReset === 'function') {
                 try {
+                    // 复位会引起 USB 重枚举，设置保护窗口忽略紧接着的 connect 事件
+                    this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
                     await this.esploader.hardReset();
                     this.addConsoleMessage('设备已重置', 'info');
                 } catch (resetError) {
@@ -1043,7 +1528,7 @@ class ModernESPLaunchpad {
             this.transport = null;
             this.device = null;
             this.isConnected = false;
-            
+
             // 更新UI状态
             this.updateConnectionStatus();
             this.addConsoleMessage('设备已断开连接', 'success');
@@ -1101,7 +1586,9 @@ class ModernESPLaunchpad {
             this.resetDeviceBtn.disabled = true;
             
             // 更新状态提示
-            this.alertMessage.textContent = '请连接您的 T3 设备到 USB 串口，然后点击"连接设备"按钮开始使用。';
+            this.alertMessage.textContent = this.getAutoFlashEnabled()
+                ? '设备已断开。插入设备后将自动识别并升级；也可点击"连接设备"手动连接。'
+                : '请连接您的 T3 设备到 USB 串口，然后点击"连接设备"按钮开始使用。';
             this.statusAlert.className = 'alert alert-info alert-dismissible fade show modern-alert';
             this.statusAlert.querySelector('i').className = 'fas fa-info-circle me-2';
         }
@@ -1159,6 +1646,8 @@ class ModernESPLaunchpad {
 
         try {
             this.isFlashing = true;
+            const autoTriggered = this.autoFlashPending;
+            this.autoFlashPending = false;
             
             // 显示进度卡片
             if (this.progressCard) {
@@ -1175,6 +1664,7 @@ class ModernESPLaunchpad {
             this.forceConsoleRefresh();
             
             this.addConsoleMessage('开始烧录固件...', 'info');
+            this.speak('开始升级');
             this.updateProgress('准备烧录...', 0);
 
             const isQuickStart = this.quickStartMode.checked;
@@ -1192,6 +1682,8 @@ class ModernESPLaunchpad {
             try {
                 if (this.esploader && this.esploader.chip) {
                     if (typeof this.esploader.hardReset === 'function') {
+                        // 复位会引起 USB 重枚举，设置保护窗口忽略紧接着的 connect 事件
+                        this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
                         await this.esploader.hardReset();
                         this.addConsoleMessage('已发送重启命令，设备正在启动新固件...', 'success');
                         await new Promise(resolve => setTimeout(resolve, 1500));
@@ -1206,7 +1698,32 @@ class ModernESPLaunchpad {
                 this.addConsoleMessage('自动重启失败，请手动按一下设备复位键', 'warning');
             }
             this.updateProgress('烧录完成', 100);
-            
+            if (autoTriggered) this.autoFailCount = 0;
+            this.speak(autoTriggered ? '升级完成，请插入下一台设备' : '升级完成');
+
+            // 自动升级完成后释放下载串口，并切换到普通串口日志读取。
+            if (autoTriggered && this.device) {
+                const completedPort = this.device;
+                this.addConsoleMessage('自动升级完成，正在切换到设备运行日志...', 'info');
+                await this.cleanupConnection();
+                await new Promise(resolve => setTimeout(resolve, 800));
+                try {
+                    await this.startSerialMonitor(completedPort);
+                    this.addConsoleMessage('设备运行日志读取已启动', 'success');
+                } catch (monitorError) {
+                    this.addConsoleMessage(`自动读取设备日志失败: ${monitorError.message}`, 'warning');
+                }
+            }
+
+            // 设备已在升级中拔出的情况：释放端口并恢复等待状态
+            if (this.deviceRemovedDuringFlash) {
+                this.deviceRemovedDuringFlash = false;
+                await this.cleanupConnection();
+                return;
+            }
+
+            this.addConsoleMessage('升级完成。可拔下设备插入下一台，插入后将自动开始升级', 'success');
+
             // 烧录完成后，恢复连接提示卡片，隐藏进度卡片
             //if (this.statusAlert) this.statusAlert.style.display = '';
             //if (this.progressCard) this.progressCard.style.display = 'none';
@@ -1216,10 +1733,23 @@ class ModernESPLaunchpad {
 
         } catch (error) {
             this.addConsoleMessage(`烧录失败: ${error.message}`, 'error');
+            this.speak('升级失败，请检查设备');
             console.error('Flash error:', error);
             // 烧录失败也恢复连接提示卡片，隐藏进度卡片
             if (this.statusAlert) this.statusAlert.style.display = '';
             if (this.progressCard) this.progressCard.style.display = 'none';
+
+            // 设备在烧录中被拔出：释放端口，等待重新插入
+            if (this.deviceRemovedDuringFlash) {
+                this.deviceRemovedDuringFlash = false;
+                await this.cleanupConnection();
+                this.addConsoleMessage('设备已拔出，重新插入后将自动重试升级', 'info');
+            } else if (autoTriggered) {
+                // 自动触发的烧录失败：计入连续失败次数，并设置重枚举保护窗口
+                this.autoFailCount++;
+                this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
+                this.addConsoleMessage(`自动升级失败（连续第 ${this.autoFailCount} 次）${this.autoFailCount >= 3 ? '，已暂停自动烧录' : ''}`, 'warning');
+            }
             
             // 显示错误模态框
             //this.showErrorModal(error.message);
@@ -1231,16 +1761,27 @@ class ModernESPLaunchpad {
     }
 
     async flashCustomMode() {
-        const firmwareUrl = this.firmwareUrlInput?.value.trim();
         const addressText = document.getElementById('flashAddressInput')?.value || '0';
-        if (!firmwareUrl) throw new Error('请输入 OpenList 固件地址');
         if (!this.validateAddress(addressText)) throw new Error('Flash 地址格式不正确');
-
         const address = parseInt(addressText.replace(/^0x/i, ''), 16);
-        this.addConsoleMessage(`读取自定义固件: ${firmwareUrl}`, 'info');
-        this.updateProgress('正在读取 OpenList 固件...', 10);
-        const fileData = await this.downloadRemoteFirmware(firmwareUrl);
-        this.addConsoleMessage(`开始写入固件 (${this.formatFileSize(fileData.length)}) 到 0x${address.toString(16)}...`, 'info');
+
+        // 本地文件优先，其次 OpenList 直链
+        const localFile = this.selectedFiles.length > 0 ? this.selectedFiles[0] : null;
+        let fileData;
+        if (localFile && localFile.file) {
+            this.addConsoleMessage(`读取本地固件: ${localFile.name}`, 'info');
+            this.updateProgress('正在读取本地固件...', 10);
+            fileData = await this.readFileAsBinaryString(localFile.file);
+            this.addConsoleMessage(`开始写入固件 (${this.formatFileSize(localFile.size)}) 到 0x${address.toString(16)}...`, 'info');
+        } else {
+            const firmwareUrl = this.firmwareUrlInput?.value.trim();
+            if (!firmwareUrl) throw new Error('请选择本地固件文件或输入 OpenList 固件地址');
+            this.addConsoleMessage(`读取自定义固件: ${firmwareUrl}`, 'info');
+            this.updateProgress('正在读取 OpenList 固件...', 10);
+            fileData = await this.downloadRemoteFirmware(firmwareUrl);
+            this.addConsoleMessage(`开始写入固件 (${this.formatFileSize(fileData.length)}) 到 0x${address.toString(16)}...`, 'info');
+        }
+
         await this.esploader.writeFlash({
             fileArray: [{ data: fileData, address }],
             flashSize: 'keep',
@@ -1310,7 +1851,13 @@ class ModernESPLaunchpad {
     async downloadRemoteFirmware(url) {
         try {
         this.addConsoleMessage('开始读取内置固件...', 'info');
-            
+
+            // 会话内缓存：同一地址的固件只下载一次，重复烧录/自动重试不再反复下载
+            if (this.firmwareCache && this.firmwareCache.url === url) {
+                this.addConsoleMessage('固件已缓存（本会话下载过），跳过重复下载', 'info');
+                return this.firmwareCache.data;
+            }
+
             const response = await fetch(url);
             if (!response.ok) {
                 throw new Error(`下载失败: ${response.status} ${response.statusText}`);
@@ -1370,6 +1917,9 @@ class ModernESPLaunchpad {
             }
             
             this.addConsoleMessage(`固件下载完成，大小: ${this.formatFileSize(binaryString.length)}`, 'success');
+
+            // 缓存固件数据，供本会话内重复烧录使用
+            this.firmwareCache = { url, data: binaryString };
             
             // 调试信息
             console.log('下载的固件数据类型:', typeof binaryString, '长度:', binaryString.length);
@@ -1481,6 +2031,8 @@ class ModernESPLaunchpad {
                 
                 // 然后执行硬重置确保设备完全重启
                 if (typeof this.esploader.hardReset === 'function') {
+                    // 复位会引起 USB 重枚举，设置保护窗口忽略紧接着的 connect 事件
+                    this.reenumGuardUntil = Date.now() + this.REENUM_GUARD_MS;
                     await this.esploader.hardReset();
                     this.addConsoleMessage('硬重置完成', 'info');
                 } else {
