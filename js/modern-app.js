@@ -121,7 +121,7 @@ class ModernESPLaunchpad {
 
         // 初始化自动模式开关（记忆上次选择）
         if (this.autoFlashSwitch) {
-            this.autoFlashSwitch.checked = localStorage.getItem('t3AutoFlashEnabled') !== '0';
+            this.autoFlashSwitch.checked = localStorage.getItem('t3AutoFlashEnabled') === '1';
             this.autoFlashSwitch.addEventListener('change', () => {
                 localStorage.setItem('t3AutoFlashEnabled', this.autoFlashSwitch.checked ? '1' : '0');
                 if (this.autoFlashSwitch.checked) {
