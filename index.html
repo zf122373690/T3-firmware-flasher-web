@@ -14,7 +14,7 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     
     <!-- Custom Modern Styles -->
-    <link href="css/modern-styles.css" rel="stylesheet" />
+    <link href="css/modern-styles.css?v=20260917" rel="stylesheet" />
     <link href="css/xterm.css" rel="stylesheet" />
 </head>
 <body class="modern-body">
@@ -60,7 +60,7 @@
             <!-- Status Alert -->
             <div class="alert alert-info alert-dismissible fade show modern-alert compact-alert" role="alert" id="statusAlert">
                 <i class="fas fa-info-circle me-2"></i>
-                <span id="alertMessage">请连接您的 T3 设备到 USB 端口，然后点击"连接设备"按钮开始使用。</span>
+                <span id="alertMessage">将 T3 设备插入 USB 端口即可自动识别并开始升级。首次使用请点击"连接设备"完成一次授权。</span>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
 
@@ -132,9 +132,22 @@
                             <div id="diyPanel" style="display: none;">
                                 <div class="alert alert-info border-0 mb-2 py-2">
                                     <i class="fas fa-info-circle me-1"></i>
-                                    <small>填写 OpenList 网盘直链并设置 Flash 地址</small>
+                                    <small>选择本地 .bin 文件，或填写 OpenList 网盘直链（本地文件优先）</small>
                                 </div>
-                                
+
+                                <!-- Local File Selection -->
+                                <div class="mb-2">
+                                    <label class="form-label form-label-sm">本地固件文件</label>
+                                    <div class="file-upload-area" id="fileUploadArea" style="cursor: pointer;">
+                                        <div class="upload-content">
+                                            <i class="fas fa-folder-open upload-icon-sm"></i>
+                                            <p class="upload-text-sm mb-1">点击选择本地 .bin 固件文件</p>
+                                            <small class="text-muted">选择后从下方设定的 Flash 地址开始烧录</small>
+                                        </div>
+                                        <input type="file" class="d-none" id="firmwareFileInput" accept=".bin">
+                                    </div>
+                                </div>
+
                                 <div class="mb-2">
                                     <label class="form-label form-label-sm">OpenList 网盘地址</label>
                                     <input type="url" class="form-control form-control-sm" id="firmwareUrlInput" placeholder="https://你的域名/d/固件.bin" autocomplete="off">
@@ -182,6 +195,23 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Auto Flash Toggle -->
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="autoFlashSwitch" checked>
+                        <label class="form-check-label small" for="autoFlashSwitch">
+                            <i class="fas fa-bolt me-1"></i>自动模式：插入设备后自动识别并开始升级
+                        </label>
+                        <div class="form-text small">首次使用需点击"连接设备"授权一次，之后每次插入设备都会自动完成升级。</div>
+                    </div>
+
+                    <!-- Voice Announcement Toggle -->
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="voiceSwitch" checked>
+                        <label class="form-check-label small" for="voiceSwitch">
+                            <i class="fas fa-volume-high me-1"></i>语音播报：连接、升级成功/失败实时语音提示
+                        </label>
                     </div>
 
                     <!-- Flash Button -->
@@ -233,6 +263,19 @@
                                     控制台
                                 </h6>
                                 <div class="console-controls">
+                                    <select id="monitorBaudrateSelect" class="form-select form-select-sm" style="width: auto;" title="日志波特率">
+                                        <option value="115200" selected>115200</option>
+                                        <option value="74880">74880</option>
+                                        <option value="9600">9600</option>
+                                    </select>
+                                    <select id="monitorModeSelect" class="form-select form-select-sm" style="width: auto;" title="连接模式">
+                                        <option value="cdc" selected>稳定连接</option>
+                                        <option value="safe">防复位</option>
+                                    </select>
+                                    <button class="btn btn-outline-success btn-sm" id="monitorToggleBtn">
+                                        <i class="fas fa-wave-square me-1"></i>
+                                        <span id="monitorBtnText">读取日志</span>
+                                    </button>
                                     <button class="btn btn-outline-secondary btn-sm" id="clearConsoleBtn">
                                         <i class="fas fa-eraser me-1"></i>
                                         清空
@@ -367,7 +410,7 @@
     <script type="module" src="js/bundle.js"></script>
     
     <!-- Our application - 作为ES6模块加载 -->
-    <script type="module" src="js/modern-app.js?v=1.0"></script>
+    <script type="module" src="js/modern-app.js?v=20260917"></script>
     
     <!-- Cache Busting Script -->
     <script>
